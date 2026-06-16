@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
+import { buildReport } from "./report.js";
 
 export function createMcpServer(accessToken: string, adAccountId: string): McpServer {
   const client = new MetaAdsClient({ accessToken, adAccountId });
@@ -151,6 +152,75 @@ Retorna: { period: [...], comparison: [...] }`,
         breakdown, limit,
       });
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ─── Relatório estruturado (detecta objetivo automaticamente) ────────────────
+
+  server.tool(
+    "get_campaign_report",
+    `Gera um relatório PRONTO de uma campanha, já agregado e formatado.
+Detecta automaticamente o objetivo da campanha (mensagens, leads, vendas, visitas/perfil, engajamento, reconhecimento) a partir do prefixo do nome ([MSG], [PERFIL], [VENDAS]...) e do campo objective da Meta, escolhe sozinho qual action_type conta como conversão e calcula CPA/CPC/CPM/CTR a partir dos totais.
+Se você passar compare_since/compare_until, devolve a comparação entre os dois períodos com variação percentual.
+Retorna: dados estruturados (atual / anterior) + uma 'mensagem' formatada estilo WhatsApp + a lista de action_types disponíveis (para conferência).`,
+    {
+      campaign_id: z.string().describe("ID da campanha"),
+      since: z.string().describe("Início do período (YYYY-MM-DD)"),
+      until: z.string().describe("Fim do período (YYYY-MM-DD)"),
+      compare_since: z
+        .string()
+        .optional()
+        .describe("Início do período de comparação (YYYY-MM-DD). Opcional."),
+      compare_until: z
+        .string()
+        .optional()
+        .describe("Fim do período de comparação (YYYY-MM-DD). Opcional."),
+      action_type: z
+        .string()
+        .optional()
+        .describe(
+          "Força um action_type específico como conversão (ex.: 'lead'). Se omitido, é detectado automaticamente."
+        ),
+    },
+    async ({ campaign_id, since, until, compare_since, compare_until, action_type }) => {
+      const campaign = await client.getCampaign(campaign_id);
+
+      const isComparison = Boolean(compare_since && compare_until);
+
+      let rows;
+      let comparisonRows;
+
+      if (isComparison) {
+        const result = await client.getInsightsComparison({
+          level: "campaign",
+          entityId: campaign_id,
+          since,
+          until,
+          compareSince: compare_since,
+          compareUntil: compare_until,
+        });
+        rows = result.period;
+        comparisonRows = result.comparison;
+      } else {
+        rows = await client.getInsights({
+          level: "campaign",
+          entityId: campaign_id,
+          since,
+          until,
+        });
+      }
+
+      const report = buildReport({
+        campaignName: campaign.name,
+        metaObjective: campaign.objective,
+        rows,
+        comparisonRows,
+        actionTypeOverride: action_type,
+      });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+      };
     }
   );
 
