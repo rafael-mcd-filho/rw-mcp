@@ -88,13 +88,11 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   profile: {
     category: "profile",
     emoji: "👤",
-    title: "Perfil / Seguidores",
-    headlineLabel: "Visitas ao perfil (cliques)",
+    title: "Perfil / Visitas",
+    headlineLabel: "Visitas",
     costLabel: "Custo por visita",
     actionPriority: ["link_click", "landing_page_view"],
     primaryMetric: "conversion",
-    footnote:
-      "A API de Ads não retorna ganho de seguidores; exibo visitas ao perfil (link_click) como proxy.",
   },
   engagement: {
     category: "engagement",
