@@ -1,7 +1,7 @@
 const META_API_BASE = "https://graph.facebook.com/v21.0";
 
 export const INSIGHTS_FIELDS =
-  "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,cpc,cpm,cpp,ctr,objective,reach,actions";
+  "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,cpc,cpm,cpp,ctr,objective,reach,actions,video_thruplay_watched_actions";
 
 export interface MetaApiConfig {
   accessToken: string;
@@ -63,6 +63,7 @@ export interface Insight {
   objective?: string;
   reach?: string;
   actions?: Array<{ action_type: string; value: string }>;
+  video_thruplay_watched_actions?: Array<{ action_type: string; value: string }>;
   date_start: string;
   date_stop: string;
 }

@@ -62,6 +62,7 @@ export interface Aggregated {
   totalImpressions: number;
   totalReach: number;
   totalConversoes: number;
+  totalThruplay: number;
   actionTypeUsado: string | null;
   avgCPC: number;
   avgCPM: number;
@@ -95,6 +96,7 @@ export function aggregate(
   let totalClicks = 0;
   let totalImpressions = 0;
   let totalReach = 0;
+  let totalThruplay = 0;
   const actionsMap: Record<string, number> = {};
 
   let date_start = rows[0]?.date_start ?? "";
@@ -112,6 +114,11 @@ export function aggregate(
       for (const a of r.actions) {
         actionsMap[a.action_type] =
           (actionsMap[a.action_type] ?? 0) + toInt(a.value);
+      }
+    }
+    if (Array.isArray(r.video_thruplay_watched_actions)) {
+      for (const a of r.video_thruplay_watched_actions) {
+        totalThruplay += toInt(a.value);
       }
     }
   }
@@ -136,6 +143,7 @@ export function aggregate(
     totalImpressions,
     totalReach,
     totalConversoes,
+    totalThruplay,
     actionTypeUsado,
     avgCPC,
     avgCPM,
@@ -282,6 +290,13 @@ function buildSingleMessage(config: CategoryConfig, a: Aggregated): string {
     `• CPC médio: ${moneyBR(a.avgCPC)}`,
     `• CPM médio: ${moneyBR(a.avgCPM)}`,
   ];
+  if (config.category === "awareness" && a.totalThruplay > 0) {
+    const custoThruplay = a.totalSpend / a.totalThruplay;
+    linhas.push(
+      `• ThruPlay (vídeo): ${intBR(a.totalThruplay)}`,
+      `• Custo por ThruPlay: ${moneyBR(custoThruplay)}`
+    );
+  }
   if (config.footnote) linhas.push(``, `ℹ️ ${config.footnote}`);
   const notas = diagnostics(config.category, a);
   if (notas.length) linhas.push(``, `📎 *Observações*`, `- ${notas.join("\n- ")}`);
@@ -338,6 +353,21 @@ function buildComparisonMessage(
       diff(atual.avgCPM, anterior.avgCPM)
     )}`,
   ];
+  if (config.category === "awareness" && atual.totalThruplay > 0) {
+    const custoAtual = atual.totalSpend / atual.totalThruplay;
+    const custoAnterior =
+      anterior.totalThruplay > 0
+        ? anterior.totalSpend / anterior.totalThruplay
+        : 0;
+    linhas.push(
+      `• ThruPlay (vídeo): ${intBR(atual.totalThruplay)}${varFmt(
+        diff(atual.totalThruplay, anterior.totalThruplay)
+      )}`,
+      `• Custo por ThruPlay: ${moneyBR(custoAtual)}${varFmt(
+        diff(custoAtual, custoAnterior)
+      )}`
+    );
+  }
   if (config.footnote) linhas.push(``, `ℹ️ ${config.footnote}`);
   const notas = diagnostics(config.category, atual);
   if (notas.length) linhas.push(``, `📎 *Observações*`, `- ${notas.join("\n- ")}`);
