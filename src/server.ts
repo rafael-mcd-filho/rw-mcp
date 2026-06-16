@@ -1,226 +1,176 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
-import { buildReport } from "./report.js";
+import { buildReport, buildAccountReport } from "./report.js";
 
-export function createMcpServer(accessToken: string, adAccountId: string): McpServer {
+const ACCOUNT_DESC =
+  "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
+
+const STATUS = z
+  .enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"])
+  .describe("Filtrar por status");
+
+const DATE_PRESETS = [
+  "today", "yesterday", "this_week_mon_today", "last_week_mon_sun",
+  "last_7d", "last_14d", "last_28d", "last_30d", "last_90d",
+  "this_month", "last_month", "this_quarter", "last_year", "this_year",
+] as const;
+
+const json = (data: unknown) => ({
+  content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+});
+
+export function createMcpServer(accessToken: string, adAccountId?: string): McpServer {
   const client = new MetaAdsClient({ accessToken, adAccountId });
 
-  const server = new McpServer({
-    name: "meta-ads-mcp",
-    version: "1.0.0",
-  });
+  const server = new McpServer({ name: "meta-ads-mcp", version: "1.0.0" });
 
-  // ─── Conta ──────────────────────────────────────────────────────────────────
+  // ─── Contas ─────────────────────────────────────────────────────────────────
+
+  server.tool(
+    "list_ad_accounts",
+    "Lista todas as contas de anúncios que o token tem acesso (id, nome, moeda, status). Use para descobrir o account_id de cada cliente.",
+    {},
+    async () => json(await client.getAdAccounts())
+  );
 
   server.tool(
     "get_ad_account",
-    "Retorna informações da conta de anúncios: nome, status, moeda, fuso horário, saldo e gasto total",
-    {},
-    async () => {
-      const account = await client.getAdAccount();
-      return { content: [{ type: "text", text: JSON.stringify(account, null, 2) }] };
-    }
+    "Informações de uma conta: nome, status, moeda, fuso, saldo e gasto total.",
+    { account_id: z.string().optional().describe(ACCOUNT_DESC) },
+    async ({ account_id }) => json(await client.getAdAccount(account_id))
   );
 
   // ─── Campanhas ──────────────────────────────────────────────────────────────
 
   server.tool(
     "list_campaigns",
-    "Lista todas as campanhas da conta. Filtre por status: ACTIVE, PAUSED, DELETED, ARCHIVED",
+    "Lista campanhas da conta. Filtre por status: ACTIVE, PAUSED, DELETED, ARCHIVED.",
     {
-      status: z
-        .enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"])
-        .optional()
-        .describe("Filtrar por status da campanha"),
+      status: STATUS.optional(),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
-    async ({ status }) => {
-      const campaigns = await client.getCampaigns(status);
-      return { content: [{ type: "text", text: JSON.stringify(campaigns, null, 2) }] };
-    }
+    async ({ status, account_id }) =>
+      json(await client.getCampaigns(status, account_id))
   );
 
   server.tool(
     "get_campaign",
-    "Retorna detalhes de uma campanha específica pelo ID",
+    "Detalhes de uma campanha específica pelo ID.",
     { campaign_id: z.string().describe("ID da campanha") },
-    async ({ campaign_id }) => {
-      const campaign = await client.getCampaign(campaign_id);
-      return { content: [{ type: "text", text: JSON.stringify(campaign, null, 2) }] };
-    }
+    async ({ campaign_id }) => json(await client.getCampaign(campaign_id))
   );
 
-  // ─── Conjuntos de Anúncios ───────────────────────────────────────────────────
+  // ─── Conjuntos e Anúncios ─────────────────────────────────────────────────────
 
   server.tool(
     "list_adsets",
-    "Lista conjuntos de anúncios. Pode filtrar por campanha e/ou status",
+    "Lista conjuntos de anúncios. Pode filtrar por campanha e/ou status.",
     {
       campaign_id: z.string().optional().describe("ID da campanha"),
-      status: z
-        .enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"])
-        .optional()
-        .describe("Filtrar por status"),
+      status: STATUS.optional(),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
-    async ({ campaign_id, status }) => {
-      const adsets = await client.getAdSets(campaign_id, status);
-      return { content: [{ type: "text", text: JSON.stringify(adsets, null, 2) }] };
-    }
+    async ({ campaign_id, status, account_id }) =>
+      json(await client.getAdSets(campaign_id, status, account_id))
   );
-
-  // ─── Anúncios ────────────────────────────────────────────────────────────────
 
   server.tool(
     "list_ads",
-    "Lista anúncios. Pode filtrar por conjunto de anúncios, campanha e/ou status",
+    "Lista anúncios. Pode filtrar por conjunto, campanha e/ou status.",
     {
       adset_id: z.string().optional().describe("ID do conjunto de anúncios"),
       campaign_id: z.string().optional().describe("ID da campanha"),
-      status: z
-        .enum(["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"])
-        .optional()
-        .describe("Filtrar por status"),
+      status: STATUS.optional(),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
-    async ({ adset_id, campaign_id, status }) => {
-      const ads = await client.getAds(adset_id, campaign_id, status);
-      return { content: [{ type: "text", text: JSON.stringify(ads, null, 2) }] };
-    }
+    async ({ adset_id, campaign_id, status, account_id }) =>
+      json(await client.getAds(adset_id, campaign_id, status, account_id))
   );
 
-  // ─── Insights — Período Único ────────────────────────────────────────────────
+  // ─── Insights brutos ──────────────────────────────────────────────────────────
 
   server.tool(
     "get_insights",
-    `Retorna métricas de desempenho para UM período: spend, impressions, clicks, cpc, cpm, cpp, ctr, objective, reach e actions.
-Use este tool quando o usuário quiser analisar um período específico (ex: "semana passada", "junho", "de 01/06 até 15/06").`,
+    "Métricas cruas para UM período: spend, impressions, clicks, cpc, cpm, cpp, ctr, reach, actions e ThruPlay. Use para análises livres.",
     {
-      level: z
-        .enum(["account", "campaign", "adset", "ad"])
-        .describe("Nível de agregação: account, campaign, adset ou ad"),
+      level: z.enum(["account", "campaign", "adset", "ad"]).describe("Nível de agregação"),
       entity_id: z.string().optional().describe("ID da entidade. Omita para a conta inteira."),
-      since: z.string().optional().describe("Data de início YYYY-MM-DD"),
-      until: z.string().optional().describe("Data de fim YYYY-MM-DD"),
-      date_preset: z
-        .enum([
-          "today", "yesterday", "this_week_mon_today", "last_week_mon_sun",
-          "last_7d", "last_14d", "last_28d", "last_30d", "last_90d",
-          "this_month", "last_month", "this_quarter", "last_year", "this_year",
-        ])
-        .optional()
-        .describe("Período pré-definido (alternativa a since/until). Padrão: last_30d"),
-      breakdown: z
-        .enum(["age", "gender", "country", "region", "placement", "device_platform"])
-        .optional()
-        .describe("Quebrar métricas por dimensão"),
-      limit: z.number().optional().describe("Máximo de resultados (padrão: 3000)"),
+      since: z.string().optional().describe("Data início YYYY-MM-DD"),
+      until: z.string().optional().describe("Data fim YYYY-MM-DD"),
+      date_preset: z.enum(DATE_PRESETS).optional().describe("Período pré-definido (padrão: last_30d)"),
+      breakdown: z.enum(["age", "gender", "country", "region", "placement", "device_platform"]).optional(),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
-    async ({ level, entity_id, since, until, date_preset, breakdown, limit }) => {
-      const insights = await client.getInsights({
+    async ({ level, entity_id, since, until, date_preset, breakdown, account_id }) =>
+      json(await client.getInsights({
         level, entityId: entity_id, since, until,
-        datePreset: date_preset, breakdown, limit,
-      });
-      return { content: [{ type: "text", text: JSON.stringify(insights, null, 2) }] };
-    }
+        datePreset: date_preset, breakdown, accountId: account_id,
+      }))
   );
 
-  // ─── Insights — Comparação de Dois Períodos ──────────────────────────────────
-
-  server.tool(
-    "get_insights_comparison",
-    `Retorna métricas comparando DOIS períodos lado a lado.
-Use quando o usuário quiser comparar períodos (ex: "compare essa semana com a semana passada", "junho vs maio").
-Retorna: { period: [...], comparison: [...] }`,
-    {
-      level: z
-        .enum(["account", "campaign", "adset", "ad"])
-        .describe("Nível de agregação: account, campaign, adset ou ad"),
-      entity_id: z.string().optional().describe("ID da entidade. Omita para a conta inteira."),
-      since: z.string().describe("Início do período PRINCIPAL (YYYY-MM-DD)"),
-      until: z.string().describe("Fim do período PRINCIPAL (YYYY-MM-DD)"),
-      compare_since: z.string().describe("Início do período de COMPARAÇÃO (YYYY-MM-DD)"),
-      compare_until: z.string().describe("Fim do período de COMPARAÇÃO (YYYY-MM-DD)"),
-      breakdown: z
-        .enum(["age", "gender", "country", "region", "placement", "device_platform"])
-        .optional()
-        .describe("Quebrar métricas por dimensão"),
-      limit: z.number().optional().describe("Máximo de resultados por período (padrão: 3000)"),
-    },
-    async ({ level, entity_id, since, until, compare_since, compare_until, breakdown, limit }) => {
-      const result = await client.getInsightsComparison({
-        level, entityId: entity_id, since, until,
-        compareSince: compare_since, compareUntil: compare_until,
-        breakdown, limit,
-      });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
-  );
-
-  // ─── Relatório estruturado (detecta objetivo automaticamente) ────────────────
+  // ─── Relatório de campanha (detecção automática de objetivo) ──────────────────
 
   server.tool(
     "get_campaign_report",
-    `Gera um relatório PRONTO de uma campanha, já agregado e formatado.
-Detecta automaticamente o objetivo da campanha (mensagens, leads, vendas, visitas/perfil, engajamento, reconhecimento) a partir do prefixo do nome ([MSG], [PERFIL], [VENDAS]...) e do campo objective da Meta, escolhe sozinho qual action_type conta como conversão e calcula CPA/CPC/CPM/CTR a partir dos totais.
-Se você passar compare_since/compare_until, devolve a comparação entre os dois períodos com variação percentual.
-Retorna: dados estruturados (atual / anterior) + uma 'mensagem' formatada estilo WhatsApp + a lista de action_types disponíveis (para conferência).`,
+    `Relatório PRONTO de uma campanha, agregado e formatado.
+Detecta o objetivo pelo nome ([MSG], [LEAD], [PERFIL], [VENDA], [REC], [ENG]) e pelo objective da Meta, escolhe o action_type de conversão e calcula CPA/CPL/CPC/CPM/CTR (e ThruPlay em reconhecimento).
+Passe compare_since/compare_until para comparar dois períodos com variação %.`,
     {
       campaign_id: z.string().describe("ID da campanha"),
       since: z.string().describe("Início do período (YYYY-MM-DD)"),
       until: z.string().describe("Fim do período (YYYY-MM-DD)"),
-      compare_since: z
-        .string()
-        .optional()
-        .describe("Início do período de comparação (YYYY-MM-DD). Opcional."),
-      compare_until: z
-        .string()
-        .optional()
-        .describe("Fim do período de comparação (YYYY-MM-DD). Opcional."),
-      action_type: z
-        .string()
-        .optional()
-        .describe(
-          "Força um action_type específico como conversão (ex.: 'lead'). Se omitido, é detectado automaticamente."
-        ),
+      compare_since: z.string().optional().describe("Início da comparação (YYYY-MM-DD)"),
+      compare_until: z.string().optional().describe("Fim da comparação (YYYY-MM-DD)"),
+      action_type: z.string().optional().describe("Força um action_type de conversão. Auto se omitido."),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
     async ({ campaign_id, since, until, compare_since, compare_until, action_type }) => {
       const campaign = await client.getCampaign(campaign_id);
-
       const isComparison = Boolean(compare_since && compare_until);
 
       let rows;
       let comparisonRows;
-
       if (isComparison) {
         const result = await client.getInsightsComparison({
-          level: "campaign",
-          entityId: campaign_id,
-          since,
-          until,
-          compareSince: compare_since,
-          compareUntil: compare_until,
+          level: "campaign", entityId: campaign_id, since, until,
+          compareSince: compare_since, compareUntil: compare_until,
         });
         rows = result.period;
         comparisonRows = result.comparison;
       } else {
         rows = await client.getInsights({
-          level: "campaign",
-          entityId: campaign_id,
-          since,
-          until,
+          level: "campaign", entityId: campaign_id, since, until,
         });
       }
 
-      const report = buildReport({
+      return json(buildReport({
         campaignName: campaign.name,
         metaObjective: campaign.objective,
-        rows,
-        comparisonRows,
-        actionTypeOverride: action_type,
-      });
+        rows, comparisonRows, actionTypeOverride: action_type,
+      }));
+    }
+  );
 
-      return {
-        content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
-      };
+  // ─── Relatório da conta inteira ───────────────────────────────────────────────
+
+  server.tool(
+    "get_account_report",
+    `Relatório consolidado de TODAS as campanhas que rodaram no período, numa só chamada.
+Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (leads, conversas, visitas, alcance...), com totais e custo por resultado. Ideal para "como foi a conta ontem / essa semana".`,
+    {
+      since: z.string().optional().describe("Início do período (YYYY-MM-DD)"),
+      until: z.string().optional().describe("Fim do período (YYYY-MM-DD)"),
+      date_preset: z.enum(DATE_PRESETS).optional().describe("Alternativa a since/until (ex.: yesterday, last_7d)"),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
+    },
+    async ({ since, until, date_preset, account_id }) => {
+      const rows = await client.getInsights({
+        level: "campaign", since, until, datePreset: date_preset, accountId: account_id,
+      });
+      const periodoLabel =
+        since && until ? `${since} → ${until}` : date_preset ?? "últimos 30 dias";
+      return json(buildAccountReport(rows, periodoLabel));
     }
   );
 

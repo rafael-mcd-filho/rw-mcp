@@ -1,11 +1,25 @@
 const META_API_BASE = "https://graph.facebook.com/v21.0";
 
+/** Garante o prefixo act_ no ID da conta. */
+function normalizeAccountId(id: string): string {
+  return id.startsWith("act_") ? id : `act_${id}`;
+}
+
 export const INSIGHTS_FIELDS =
   "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,cpc,cpm,cpp,ctr,objective,reach,actions,video_thruplay_watched_actions";
 
 export interface MetaApiConfig {
   accessToken: string;
-  adAccountId: string;
+  /** Conta padrão usada quando uma chamada não especifica account_id. */
+  adAccountId?: string;
+}
+
+export interface AdAccount {
+  id: string;
+  account_id?: string;
+  name: string;
+  account_status?: number;
+  currency?: string;
 }
 
 export interface Campaign {
@@ -71,6 +85,8 @@ export interface Insight {
 export interface InsightsOptions {
   level: "account" | "campaign" | "adset" | "ad";
   entityId?: string;
+  /** Conta a consultar (override). Se omitido, usa a conta padrão. */
+  accountId?: string;
   // Período único
   since?: string;
   until?: string;
@@ -90,13 +106,24 @@ export interface ComparisonResult {
 
 export class MetaAdsClient {
   private accessToken: string;
-  private adAccountId: string;
+  private defaultAccountId?: string;
 
   constructor(config: MetaApiConfig) {
     this.accessToken = config.accessToken;
-    this.adAccountId = config.adAccountId.startsWith("act_")
-      ? config.adAccountId
-      : `act_${config.adAccountId}`;
+    this.defaultAccountId = config.adAccountId
+      ? normalizeAccountId(config.adAccountId)
+      : undefined;
+  }
+
+  /** Resolve a conta a usar: override da chamada ou padrão do servidor. */
+  private resolveAccount(accountId?: string): string {
+    const id = accountId ?? this.defaultAccountId;
+    if (!id) {
+      throw new Error(
+        "Nenhuma conta especificada. Passe account_id ou configure META_AD_ACCOUNT_ID."
+      );
+    }
+    return normalizeAccountId(id);
   }
 
   private async request<T>(
@@ -122,14 +149,23 @@ export class MetaAdsClient {
     return data;
   }
 
-  async getCampaigns(status?: string): Promise<Campaign[]> {
+  /** Lista as contas de anúncio acessíveis pelo token. */
+  async getAdAccounts(): Promise<AdAccount[]> {
+    const result = await this.request<{ data: AdAccount[] }>("me/adaccounts", {
+      fields: "id,account_id,name,account_status,currency",
+      limit: "200",
+    });
+    return result.data;
+  }
+
+  async getCampaigns(status?: string, accountId?: string): Promise<Campaign[]> {
     const fields =
       "id,name,status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time";
     const params: Record<string, string> = { fields };
     if (status) params["effective_status"] = `["${status}"]`;
 
     const result = await this.request<{ data: Campaign[] }>(
-      `${this.adAccountId}/campaigns`,
+      `${this.resolveAccount(accountId)}/campaigns`,
       params
     );
     return result.data;
@@ -141,7 +177,11 @@ export class MetaAdsClient {
     return this.request<Campaign>(campaignId, { fields });
   }
 
-  async getAdSets(campaignId?: string, status?: string): Promise<AdSet[]> {
+  async getAdSets(
+    campaignId?: string,
+    status?: string,
+    accountId?: string
+  ): Promise<AdSet[]> {
     const fields =
       "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event,targeting,start_time,end_time";
     const params: Record<string, string> = { fields };
@@ -149,7 +189,7 @@ export class MetaAdsClient {
 
     const endpoint = campaignId
       ? `${campaignId}/adsets`
-      : `${this.adAccountId}/adsets`;
+      : `${this.resolveAccount(accountId)}/adsets`;
 
     const result = await this.request<{ data: AdSet[] }>(endpoint, params);
     return result.data;
@@ -158,7 +198,8 @@ export class MetaAdsClient {
   async getAds(
     adSetId?: string,
     campaignId?: string,
-    status?: string
+    status?: string,
+    accountId?: string
   ): Promise<Ad[]> {
     const fields =
       "id,name,status,adset_id,campaign_id,creative,created_time,updated_time";
@@ -171,7 +212,7 @@ export class MetaAdsClient {
     } else if (campaignId) {
       endpoint = `${campaignId}/ads`;
     } else {
-      endpoint = `${this.adAccountId}/ads`;
+      endpoint = `${this.resolveAccount(accountId)}/ads`;
     }
 
     const result = await this.request<{ data: Ad[] }>(endpoint, params);
@@ -209,7 +250,7 @@ export class MetaAdsClient {
     const endpoint =
       entityId && level !== "account"
         ? `${entityId}/insights`
-        : `${this.adAccountId}/insights`;
+        : `${this.resolveAccount(options.accountId)}/insights`;
 
     const result = await this.request<{ data: Insight[] }>(endpoint, params);
     return result.data;
@@ -252,7 +293,7 @@ export class MetaAdsClient {
     const endpoint =
       entityId && level !== "account"
         ? `${entityId}/insights`
-        : `${this.adAccountId}/insights`;
+        : `${this.resolveAccount(options.accountId)}/insights`;
 
     const result = await this.request<{ data: Insight[] }>(endpoint, params);
 
@@ -270,9 +311,12 @@ export class MetaAdsClient {
     return { period, comparison };
   }
 
-  async getAdAccount(): Promise<Record<string, unknown>> {
+  async getAdAccount(accountId?: string): Promise<Record<string, unknown>> {
     const fields =
       "id,name,account_status,currency,timezone_name,spend_cap,amount_spent,balance";
-    return this.request<Record<string, unknown>>(this.adAccountId, { fields });
+    return this.request<Record<string, unknown>>(
+      this.resolveAccount(accountId),
+      { fields }
+    );
   }
 }

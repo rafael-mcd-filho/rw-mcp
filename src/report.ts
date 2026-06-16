@@ -421,3 +421,76 @@ export function buildReport(input: ReportInput) {
     mensagem: buildSingleMessage(config, atual),
   };
 }
+
+// ─── Relatório da conta inteira ───────────────────────────────────────────────
+
+/** Resultado principal de uma campanha (valor + custo), conforme o objetivo. */
+function campaignResult(config: CategoryConfig, a: Aggregated) {
+  if (config.primaryMetric === "reach") {
+    const cpr = a.totalReach > 0 ? a.totalSpend / a.totalReach : 0;
+    return { valor: a.totalReach, custo: cpr };
+  }
+  return { valor: a.totalConversoes, custo: a.cpa };
+}
+
+/**
+ * Recebe as linhas de insights ao nível de campanha (uma por campanha) da conta
+ * inteira e devolve um resumo consolidado: cada campanha com seu objetivo
+ * detectado e resultado, mais os totais e uma mensagem formatada.
+ */
+export function buildAccountReport(
+  rows: Insight[],
+  periodoLabel: string
+) {
+  const campanhas = rows.map((r) => {
+    const config = detectCategory(r.campaign_name ?? "", r.objective);
+    const agg = aggregate([r], config);
+    const { valor, custo } = campaignResult(config, agg);
+    return {
+      nome: r.campaign_name ?? "(sem nome)",
+      categoria: config.category,
+      emoji: config.emoji,
+      headlineLabel: config.headlineLabel,
+      costLabel: config.costLabel,
+      gasto: agg.totalSpend,
+      resultado: valor,
+      custo,
+      cliques: agg.totalClicks,
+    };
+  });
+
+  // Ordena por gasto (maior primeiro)
+  campanhas.sort((a, b) => b.gasto - a.gasto);
+
+  const totalGasto =
+    Math.round(campanhas.reduce((s, c) => s + c.gasto, 0) * 100) / 100;
+  const totaisPorCategoria: Record<string, number> = {};
+  for (const c of campanhas) {
+    totaisPorCategoria[c.categoria] =
+      (totaisPorCategoria[c.categoria] ?? 0) + c.resultado;
+  }
+
+  // Mensagem formatada
+  const linhas = [`📊 *Relatório da conta — ${periodoLabel}*`, ``];
+  for (const c of campanhas) {
+    const custoStr = c.resultado > 0 ? moneyBR(c.custo) : "—";
+    linhas.push(
+      `${c.emoji} *${c.nome}*`,
+      `   ${moneyBR(c.gasto)} · ${c.headlineLabel}: ${intBR(c.resultado)} · ${c.costLabel}: ${custoStr}`
+    );
+  }
+  linhas.push(``, `*Total investido: ${moneyBR(totalGasto)}*`);
+  const leadsForm = totaisPorCategoria["lead_form"] ?? 0;
+  const conversas = totaisPorCategoria["messages"] ?? 0;
+  const destaques: string[] = [];
+  if (leadsForm > 0) destaques.push(`Leads (formulário): ${intBR(leadsForm)}`);
+  if (conversas > 0) destaques.push(`Conversas (WhatsApp): ${intBR(conversas)}`);
+  if (destaques.length) linhas.push(destaques.join(" · "));
+
+  return {
+    periodo: periodoLabel,
+    totais: { gasto: totalGasto, por_categoria: totaisPorCategoria },
+    campanhas,
+    mensagem: linhas.join("\n"),
+  };
+}
