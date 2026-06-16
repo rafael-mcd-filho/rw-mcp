@@ -135,7 +135,7 @@ const NAME_RULES: Array<{ re: RegExp; category: ObjectiveCategory }> = [
   { re: /(VENDA|SALE)/, category: "sales" },
   { re: /(SEGUIDOR|PERFIL|CRESCIMENTO)/, category: "profile" },
   { re: /(RESERVA|LEAD)/, category: "lead_form" },
-  { re: /(ENGA|ENGAJ|ENGAGE)/, category: "engagement" },
+  { re: /(\bENG|ENGAJ|ENGAGE)/, category: "engagement" },
   { re: /(\bREC\b|RECONHEC|AUTORIDADE|ALCANCE|AWARENESS)/, category: "awareness" },
 ];
 
