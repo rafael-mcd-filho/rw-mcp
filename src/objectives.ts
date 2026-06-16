@@ -1,40 +1,49 @@
 // Detecção automática do objetivo da campanha e mapeamento para o
 // action_type que conta como "conversão", além do template de exibição.
 //
-// Sinal primário: prefixo entre colchetes no nome da campanha ([MSG], [PERFIL]...).
-// Sinal secundário (fallback): o campo `objective` que a Meta devolve.
+// Sinais (em ordem de confiança):
+//   1. Tags no nome da campanha ([MSG], [PERFIL], [LEAD-FORM]...). O nome pode
+//      ter VÁRIAS tags (ex.: "[ENGA] - [WHATS] - [RESERVAS]") — nesse caso vence
+//      a tag que DEFINE a conversão (WHATS/MSG vence ENGA).
+//   2. Campo `objective` que a Meta devolve (fallback).
 //
-// Observação importante (validada com dados reais desta conta): campanhas de
-// "VENDAS" aqui NÃO têm evento de compra via pixel — elas geram conversas no
-// WhatsApp. Por isso o fallback de `sales` inclui o action_type de mensagens.
+// Mapeamentos validados com dados reais das contas:
+//   - lead por formulário (OUTCOME_LEADS + pixel): action_type `lead`
+//   - lead por mensagem (WhatsApp): `onsite_conversion.messaging_conversation_started_7d`
+//   - perfil/seguidores (OUTCOME_TRAFFIC): `link_click` (a API de Ads NÃO devolve
+//     ganho de seguidores — isso vive na Instagram Graph API)
+//   - reconhecimento/autoridade (OUTCOME_AWARENESS): métrica principal = alcance
+//   - vendas sem pixel (esta conta): cai em messaging
 
 export type ObjectiveCategory =
-  | "messages"
-  | "leads"
+  | "messages" // lead por mensagem / WhatsApp
+  | "lead_form" // lead por formulário / site (pixel)
   | "sales"
-  | "profile"
+  | "profile" // perfil / seguidores
   | "engagement"
-  | "awareness";
+  | "awareness"; // reconhecimento / autoridade
 
 export interface CategoryConfig {
   category: ObjectiveCategory;
   emoji: string;
   title: string;
-  /** Rótulo da métrica principal (ex.: "Mensagens", "Leads", "Visitas"). */
+  /** Rótulo da métrica principal (ex.: "Leads", "Conversas iniciadas"). */
   headlineLabel: string;
-  /** Rótulo do custo principal (ex.: "CPA (custo por conversa)"). */
+  /** Rótulo do custo principal (ex.: "CPL (custo por lead)"). */
   costLabel: string;
   /** Ordem de preferência do action_type que conta como conversão. */
   actionPriority: string[];
   /** Se a métrica principal é uma conversão (actions) ou o alcance (reach). */
   primaryMetric: "conversion" | "reach";
+  /** Observação fixa exibida na mensagem (ex.: aviso sobre seguidores). */
+  footnote?: string;
 }
 
 const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   messages: {
     category: "messages",
     emoji: "💬",
-    title: "Campanha de Mensagens (WhatsApp)",
+    title: "Leads por Mensagem (WhatsApp)",
     headlineLabel: "Conversas iniciadas",
     costLabel: "CPA (custo por conversa)",
     actionPriority: [
@@ -44,16 +53,17 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
     ],
     primaryMetric: "conversion",
   },
-  leads: {
-    category: "leads",
-    emoji: "📨",
-    title: "Campanha de Leads",
+  lead_form: {
+    category: "lead_form",
+    emoji: "📋",
+    title: "Leads por Formulário",
     headlineLabel: "Leads",
-    costLabel: "CPA (custo por lead)",
+    costLabel: "CPL (custo por lead)",
     actionPriority: [
       "lead",
-      "onsite_conversion.lead_grouped",
       "offsite_conversion.fb_pixel_lead",
+      "onsite_web_lead",
+      "onsite_conversion.lead_grouped",
       "leadgen_grouped",
     ],
     primaryMetric: "conversion",
@@ -61,7 +71,7 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   sales: {
     category: "sales",
     emoji: "🛒",
-    title: "Campanha de Vendas",
+    title: "Vendas",
     headlineLabel: "Conversões",
     costLabel: "CPA (custo por conversão)",
     actionPriority: [
@@ -69,7 +79,7 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
       "purchase",
       "omni_purchase",
       "onsite_web_purchase",
-      // Esta conta não usa pixel de compra — vendas acontecem via WhatsApp:
+      // Contas sem pixel de compra — vendas acontecem via WhatsApp:
       "onsite_conversion.messaging_conversation_started_7d",
       "onsite_conversion.total_messaging_connection",
     ],
@@ -77,17 +87,19 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   },
   profile: {
     category: "profile",
-    emoji: "📌",
-    title: "Campanha de Visitas / Tráfego",
-    headlineLabel: "Visitas (cliques no link)",
+    emoji: "👤",
+    title: "Perfil / Seguidores",
+    headlineLabel: "Visitas ao perfil (cliques)",
     costLabel: "Custo por visita",
     actionPriority: ["link_click", "landing_page_view"],
     primaryMetric: "conversion",
+    footnote:
+      "A API de Ads não retorna ganho de seguidores; exibo visitas ao perfil (link_click) como proxy.",
   },
   engagement: {
     category: "engagement",
     emoji: "📣",
-    title: "Campanha de Engajamento",
+    title: "Engajamento",
     headlineLabel: "Engajamentos",
     costLabel: "Custo por engajamento",
     actionPriority: ["post_engagement", "page_engagement"],
@@ -96,7 +108,7 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   awareness: {
     category: "awareness",
     emoji: "📢",
-    title: "Campanha de Reconhecimento",
+    title: "Reconhecimento / Autoridade",
     headlineLabel: "Alcance",
     costLabel: "CPR (custo por pessoa alcançada)",
     actionPriority: [],
@@ -112,26 +124,33 @@ function normalize(text: string): string {
     .toUpperCase();
 }
 
-/** Extrai o primeiro token entre colchetes do nome da campanha. */
-function extractPrefix(name: string): string | null {
-  const match = name.match(/\[([^\]]+)\]/);
-  return match ? normalize(match[1]) : null;
-}
+/**
+ * Regras de detecção em ORDEM DE PRIORIDADE. A primeira que casar com qualquer
+ * parte do nome vence. A ordem importa: tags que definem a conversão (FORM,
+ * WHATS/MSG) vêm antes de tags de objetivo amplo (ENGA, REC).
+ */
+const NAME_RULES: Array<{ re: RegExp; category: ObjectiveCategory }> = [
+  { re: /FORM/, category: "lead_form" },
+  { re: /(WHATS|WPP|MSG|MENSAG)/, category: "messages" },
+  { re: /(VENDA|SALE)/, category: "sales" },
+  { re: /(SEGUIDOR|PERFIL|CRESCIMENTO)/, category: "profile" },
+  { re: /(RESERVA|LEAD)/, category: "lead_form" },
+  { re: /(ENGA|ENGAJ|ENGAGE)/, category: "engagement" },
+  { re: /(\bREC\b|RECONHEC|AUTORIDADE|ALCANCE|AWARENESS)/, category: "awareness" },
+];
 
-function fromPrefix(prefix: string): ObjectiveCategory | null {
-  if (/(MSG|MENSAG|WHATS|WPP)/.test(prefix)) return "messages";
-  if (/LEAD/.test(prefix)) return "leads";
-  if (/(VENDA|SALE)/.test(prefix)) return "sales";
-  if (/(PERFIL|VISITA|TRAFEGO|TRAFFIC)/.test(prefix)) return "profile";
-  if (/(RECONHEC|ALCANCE|AWARENESS|\bREC\b)/.test(prefix)) return "awareness";
-  if (/(ENGAJ|ENGAGE|\bENG\b)/.test(prefix)) return "engagement";
+function fromName(name: string): ObjectiveCategory | null {
+  const n = normalize(name);
+  for (const rule of NAME_RULES) {
+    if (rule.re.test(n)) return rule.category;
+  }
   return null;
 }
 
 function fromMetaObjective(objective: string): ObjectiveCategory {
   const o = normalize(objective);
   if (/(SALES|CONVERSION|PURCHASE|CATALOG)/.test(o)) return "sales";
-  if (/(LEAD)/.test(o)) return "leads";
+  if (/LEAD/.test(o)) return "lead_form";
   if (/(AWARENESS|REACH)/.test(o)) return "awareness";
   if (/(TRAFFIC|LINK_CLICK)/.test(o)) return "profile";
   if (/(MESSAGE|CONVERSATION)/.test(o)) return "messages";
@@ -140,16 +159,15 @@ function fromMetaObjective(objective: string): ObjectiveCategory {
 }
 
 /**
- * Detecta a categoria da campanha combinando o prefixo do nome (sinal primário,
- * mais confiável) e o campo objective da Meta (fallback).
+ * Detecta a categoria combinando as tags do nome (sinal primário) e o campo
+ * objective da Meta (fallback).
  */
 export function detectCategory(
   name: string,
   metaObjective?: string
 ): CategoryConfig {
-  const prefix = extractPrefix(name);
-  const byPrefix = prefix ? fromPrefix(prefix) : null;
-  if (byPrefix) return CONFIGS[byPrefix];
+  const byName = fromName(name);
+  if (byName) return CONFIGS[byName];
   if (metaObjective) return CONFIGS[fromMetaObjective(metaObjective)];
   return CONFIGS.engagement;
 }

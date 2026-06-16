@@ -176,14 +176,14 @@ function diagnostics(category: ObjectiveCategory, a: Aggregated): string[] {
             : "CPC dentro da média para o nicho."
         );
       break;
-    case "leads":
+    case "lead_form":
       if (a.cpa > 0)
         notas.push(
           a.cpa <= 7
-            ? "CPA em patamar baixo para captação de leads."
+            ? "CPL em patamar baixo para captação de leads."
             : a.cpa <= 15
-            ? "CPA em patamar intermediário para captação de leads."
-            : "CPA em patamar alto para captação de leads."
+            ? "CPL em patamar intermediário para captação de leads."
+            : "CPL em patamar alto para captação de leads."
         );
       notas.push(
         ctrPct < 1
@@ -282,6 +282,7 @@ function buildSingleMessage(config: CategoryConfig, a: Aggregated): string {
     `• CPC médio: ${moneyBR(a.avgCPC)}`,
     `• CPM médio: ${moneyBR(a.avgCPM)}`,
   ];
+  if (config.footnote) linhas.push(``, `ℹ️ ${config.footnote}`);
   const notas = diagnostics(config.category, a);
   if (notas.length) linhas.push(``, `📎 *Observações*`, `- ${notas.join("\n- ")}`);
   return linhas.join("\n");
@@ -337,6 +338,7 @@ function buildComparisonMessage(
       diff(atual.avgCPM, anterior.avgCPM)
     )}`,
   ];
+  if (config.footnote) linhas.push(``, `ℹ️ ${config.footnote}`);
   const notas = diagnostics(config.category, atual);
   if (notas.length) linhas.push(``, `📎 *Observações*`, `- ${notas.join("\n- ")}`);
   return linhas.join("\n");
