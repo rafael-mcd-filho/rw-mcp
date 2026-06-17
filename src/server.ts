@@ -44,6 +44,86 @@ const json = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
 
+const ACCOUNT_ID_SCHEMA = {
+  account_id: z.string().optional().describe(ACCOUNT_DESC),
+  ad_account_id: z.string().optional().describe("Alias de account_id."),
+  accountId: z.string().optional().describe("Alias de account_id."),
+  META_AD_ACCOUNT_ID: z.string().optional().describe("Alias de account_id."),
+};
+
+const OPTIONAL_PERIOD_SCHEMA = {
+  since: z.string().optional().describe("Data inicio YYYY-MM-DD"),
+  until: z.string().optional().describe("Data fim YYYY-MM-DD"),
+  start_date: z.string().optional().describe("Alias de since."),
+  end_date: z.string().optional().describe("Alias de until."),
+  date_start: z.string().optional().describe("Alias de since."),
+  date_end: z.string().optional().describe("Alias de until."),
+};
+
+const CAMPAIGN_ID_SCHEMA = {
+  campaign_id: z.string().optional().describe("ID da campanha"),
+  campaignId: z.string().optional().describe("Alias de campaign_id."),
+  CAMPAIGN_ID: z.string().optional().describe("Alias de campaign_id."),
+};
+
+const PIXEL_ID_SCHEMA = {
+  pixel_id: z.string().optional().describe("ID do pixel/dataset"),
+  pixelId: z.string().optional().describe("Alias de pixel_id."),
+  PIXEL_ID: z.string().optional().describe("Alias de pixel_id."),
+};
+
+type AccountIdArgs = {
+  account_id?: string;
+  ad_account_id?: string;
+  accountId?: string;
+  META_AD_ACCOUNT_ID?: string;
+};
+
+type PeriodArgs = {
+  since?: string;
+  until?: string;
+  start_date?: string;
+  end_date?: string;
+  date_start?: string;
+  date_end?: string;
+};
+
+type CampaignIdArgs = {
+  campaign_id?: string;
+  campaignId?: string;
+  CAMPAIGN_ID?: string;
+};
+
+type PixelIdArgs = {
+  pixel_id?: string;
+  pixelId?: string;
+  PIXEL_ID?: string;
+};
+
+function accountIdFrom(args: AccountIdArgs): string | undefined {
+  return args.account_id ?? args.ad_account_id ?? args.accountId ?? args.META_AD_ACCOUNT_ID;
+}
+
+function periodFrom(args: PeriodArgs): { since?: string; until?: string } {
+  return {
+    since: args.since ?? args.start_date ?? args.date_start,
+    until: args.until ?? args.end_date ?? args.date_end,
+  };
+}
+
+function campaignIdFrom(args: CampaignIdArgs): string | undefined {
+  return args.campaign_id ?? args.campaignId ?? args.CAMPAIGN_ID;
+}
+
+function pixelIdFrom(args: PixelIdArgs): string | undefined {
+  return args.pixel_id ?? args.pixelId ?? args.PIXEL_ID;
+}
+
+function requireValue(value: string | undefined, field: string): string {
+  if (!value) throw new Error(`Parametro obrigatorio ausente: ${field}`);
+  return value;
+}
+
 export function createMcpServer(
   accessToken: string,
   adAccountId?: string,
@@ -65,8 +145,8 @@ export function createMcpServer(
   server.tool(
     "get_ad_account",
     "Informações de uma conta: nome, status, moeda, fuso, saldo e gasto total.",
-    { account_id: z.string().optional().describe(ACCOUNT_DESC) },
-    async ({ account_id }) => json(await client.getAdAccount(account_id))
+    ACCOUNT_ID_SCHEMA,
+    async (args) => json(await client.getAdAccount(accountIdFrom(args)))
   );
 
   // ─── Campanhas ──────────────────────────────────────────────────────────────
@@ -76,17 +156,17 @@ export function createMcpServer(
     "Lista campanhas da conta. Filtre por status: ACTIVE, PAUSED, DELETED, ARCHIVED.",
     {
       status: STATUS.optional(),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ status, account_id }) =>
-      json(await client.getCampaigns(status, account_id))
+    async (args) =>
+      json(await client.getCampaigns(args.status, accountIdFrom(args)))
   );
 
   server.tool(
     "get_campaign",
     "Detalhes de uma campanha específica pelo ID.",
-    { campaign_id: z.string().describe("ID da campanha") },
-    async ({ campaign_id }) => json(await client.getCampaign(campaign_id))
+    CAMPAIGN_ID_SCHEMA,
+    async (args) => json(await client.getCampaign(requireValue(campaignIdFrom(args), "campaign_id")))
   );
 
   // ─── Conjuntos e Anúncios ─────────────────────────────────────────────────────
@@ -95,12 +175,12 @@ export function createMcpServer(
     "list_adsets",
     "Lista conjuntos de anúncios. Pode filtrar por campanha e/ou status.",
     {
-      campaign_id: z.string().optional().describe("ID da campanha"),
+      ...CAMPAIGN_ID_SCHEMA,
       status: STATUS.optional(),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ campaign_id, status, account_id }) =>
-      json(await client.getAdSets(campaign_id, status, account_id))
+    async (args) =>
+      json(await client.getAdSets(campaignIdFrom(args), args.status, accountIdFrom(args)))
   );
 
   server.tool(
@@ -108,12 +188,13 @@ export function createMcpServer(
     "Lista anúncios. Pode filtrar por conjunto, campanha e/ou status.",
     {
       adset_id: z.string().optional().describe("ID do conjunto de anúncios"),
-      campaign_id: z.string().optional().describe("ID da campanha"),
+      adsetId: z.string().optional().describe("Alias de adset_id."),
+      ...CAMPAIGN_ID_SCHEMA,
       status: STATUS.optional(),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ adset_id, campaign_id, status, account_id }) =>
-      json(await client.getAds(adset_id, campaign_id, status, account_id))
+    async (args) =>
+      json(await client.getAds(args.adset_id ?? args.adsetId, campaignIdFrom(args), args.status, accountIdFrom(args)))
   );
 
   // ─── Insights brutos ──────────────────────────────────────────────────────────
@@ -124,8 +205,9 @@ export function createMcpServer(
     {
       level: z.enum(["account", "campaign", "adset", "ad"]).describe("Nível de agregação"),
       entity_id: z.string().optional().describe("ID da entidade. Omita para a conta inteira."),
-      since: z.string().optional().describe("Data início YYYY-MM-DD"),
-      until: z.string().optional().describe("Data fim YYYY-MM-DD"),
+      entityId: z.string().optional().describe("Alias de entity_id."),
+      ENTITY_ID: z.string().optional().describe("Alias de entity_id."),
+      ...OPTIONAL_PERIOD_SCHEMA,
       date_preset: z.enum(DATE_PRESETS).optional().describe("Período pré-definido (padrão: last_30d)"),
       breakdown: z.enum(BREAKDOWNS).optional().describe("Quebra única. 'placement' vira publisher_platform + platform_position."),
       breakdowns: z.array(z.enum(BREAKDOWNS)).optional().describe("Quebras múltiplas."),
@@ -137,47 +219,34 @@ export function createMcpServer(
       filtering: z.array(z.record(z.string(), z.unknown())).optional(),
       sort: z.string().optional().describe("Ex.: spend_descending"),
       default_summary: z.boolean().optional(),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({
-      level,
-      entity_id,
-      since,
-      until,
-      date_preset,
-      breakdown,
-      breakdowns,
-      action_breakdowns,
-      action_report_time,
-      action_attribution_windows,
-      use_account_attribution,
-      use_unified_attribution,
-      filtering,
-      sort,
-      default_summary,
-      account_id,
-    }) =>
-      json(await client.getInsights({
-        level,
-        entityId: entity_id,
+    async (args) => {
+      const { since, until } = periodFrom(args);
+      const entityId = args.entity_id ?? args.entityId ?? args.ENTITY_ID;
+
+      return json(await client.getInsights({
+        level: args.level,
+        entityId,
         since,
         until,
-        datePreset: date_preset,
-        breakdown: breakdown === "placement" ? undefined : breakdown,
+        datePreset: args.date_preset,
+        breakdown: args.breakdown === "placement" ? undefined : args.breakdown,
         breakdowns:
-          breakdown === "placement"
+          args.breakdown === "placement"
             ? ["publisher_platform", "platform_position"]
-            : (breakdowns as string[] | undefined)?.filter((item: string) => item !== "placement"),
-        actionBreakdowns: action_breakdowns,
-        actionReportTime: action_report_time,
-        actionAttributionWindows: action_attribution_windows,
-        useAccountAttribution: use_account_attribution,
-        useUnifiedAttribution: use_unified_attribution,
-        filtering,
-        sort,
-        defaultSummary: default_summary,
-        accountId: account_id,
-      }))
+            : (args.breakdowns as string[] | undefined)?.filter((item: string) => item !== "placement"),
+        actionBreakdowns: args.action_breakdowns,
+        actionReportTime: args.action_report_time,
+        actionAttributionWindows: args.action_attribution_windows,
+        useAccountAttribution: args.use_account_attribution,
+        useUnifiedAttribution: args.use_unified_attribution,
+        filtering: args.filtering,
+        sort: args.sort,
+        defaultSummary: args.default_summary,
+        accountId: accountIdFrom(args),
+      }));
+    }
   );
 
   // ─── Pixels / datasets ──────────────────────────────────────────────────────
@@ -185,34 +254,34 @@ export function createMcpServer(
   server.tool(
     "list_pixels",
     "Lista pixels/datasets vinculados à conta. Apenas leitura.",
-    { account_id: z.string().optional().describe(ACCOUNT_DESC) },
-    async ({ account_id }) => json(await client.listPixels(account_id))
+    ACCOUNT_ID_SCHEMA,
+    async (args) => json(await client.listPixels(accountIdFrom(args)))
   );
 
   server.tool(
     "get_pixel",
     "Detalhes de um pixel/dataset pelo ID. Apenas leitura.",
-    { pixel_id: z.string().describe("ID do pixel/dataset") },
-    async ({ pixel_id }) => json(await client.getPixel(pixel_id))
+    PIXEL_ID_SCHEMA,
+    async (args) => json(await client.getPixel(requireValue(pixelIdFrom(args), "pixel_id")))
   );
 
   server.tool(
     "get_pixel_events",
     "Resumo de eventos recebidos por um pixel no período informado.",
     {
-      pixel_id: z.string().describe("ID do pixel/dataset"),
+      ...PIXEL_ID_SCHEMA,
       start: z.string().optional().describe("Data início YYYY-MM-DD ou timestamp Unix"),
       end: z.string().optional().describe("Data fim YYYY-MM-DD ou timestamp Unix"),
     },
-    async ({ pixel_id, start, end }) =>
-      json(await client.getPixelEvents(pixel_id, { start, end }))
+    async (args) =>
+      json(await client.getPixelEvents(requireValue(pixelIdFrom(args), "pixel_id"), { start: args.start, end: args.end }))
   );
 
   server.tool(
     "get_pixel_diagnostics",
     "Diagnóstico de saúde do pixel: último disparo, eventos recentes, automatic matching e problemas encontrados.",
-    { pixel_id: z.string().describe("ID do pixel/dataset") },
-    async ({ pixel_id }) => json(await client.getPixelDiagnostics(pixel_id))
+    PIXEL_ID_SCHEMA,
+    async (args) => json(await client.getPixelDiagnostics(requireValue(pixelIdFrom(args), "pixel_id")))
   );
 
   // ─── Relatório de campanha (detecção automática de objetivo) ──────────────────
@@ -223,15 +292,22 @@ export function createMcpServer(
 Detecta o objetivo pelo nome ([MSG], [LEAD], [PERFIL], [VENDA], [REC], [ENG]) e pelo objective da Meta, escolhe o action_type de conversão e calcula CPA/CPL/CPC/CPM/CTR (e ThruPlay em reconhecimento).
 Passe compare_since/compare_until para comparar dois períodos com variação %.`,
     {
-      campaign_id: z.string().describe("ID da campanha"),
-      since: z.string().describe("Início do período (YYYY-MM-DD)"),
-      until: z.string().describe("Fim do período (YYYY-MM-DD)"),
+      ...CAMPAIGN_ID_SCHEMA,
+      ...OPTIONAL_PERIOD_SCHEMA,
       compare_since: z.string().optional().describe("Início da comparação (YYYY-MM-DD)"),
       compare_until: z.string().optional().describe("Fim da comparação (YYYY-MM-DD)"),
+      compare_start_date: z.string().optional().describe("Alias de compare_since."),
+      compare_end_date: z.string().optional().describe("Alias de compare_until."),
       action_type: z.string().optional().describe("Força um action_type de conversão. Auto se omitido."),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ campaign_id, since, until, compare_since, compare_until, action_type }) => {
+    async (args) => {
+      const campaign_id = requireValue(campaignIdFrom(args), "campaign_id");
+      const { since, until } = periodFrom(args);
+      const periodSince = requireValue(since, "since");
+      const periodUntil = requireValue(until, "until");
+      const compare_since = args.compare_since ?? args.compare_start_date;
+      const compare_until = args.compare_until ?? args.compare_end_date;
       const campaign = await client.getCampaign(campaign_id);
       const isComparison = Boolean(compare_since && compare_until);
 
@@ -239,21 +315,21 @@ Passe compare_since/compare_until para comparar dois períodos com variação %.
       let comparisonRows;
       if (isComparison) {
         const result = await client.getInsightsComparison({
-          level: "campaign", entityId: campaign_id, since, until,
+          level: "campaign", entityId: campaign_id, since: periodSince, until: periodUntil,
           compareSince: compare_since, compareUntil: compare_until,
         });
         rows = result.period;
         comparisonRows = result.comparison;
       } else {
         rows = await client.getInsights({
-          level: "campaign", entityId: campaign_id, since, until,
+          level: "campaign", entityId: campaign_id, since: periodSince, until: periodUntil,
         });
       }
 
       return json(buildReport({
         campaignName: campaign.name,
         metaObjective: campaign.objective,
-        rows, comparisonRows, actionTypeOverride: action_type,
+        rows, comparisonRows, actionTypeOverride: args.action_type,
       }));
     }
   );
@@ -265,17 +341,17 @@ Passe compare_since/compare_until para comparar dois períodos com variação %.
     `Relatório consolidado de TODAS as campanhas que rodaram no período, numa só chamada.
 Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (leads, conversas, visitas, alcance...), com totais e custo por resultado. Ideal para "como foi a conta ontem / essa semana".`,
     {
-      since: z.string().optional().describe("Início do período (YYYY-MM-DD)"),
-      until: z.string().optional().describe("Fim do período (YYYY-MM-DD)"),
+      ...OPTIONAL_PERIOD_SCHEMA,
       date_preset: z.enum(DATE_PRESETS).optional().describe("Alternativa a since/until (ex.: yesterday, last_7d)"),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ since, until, date_preset, account_id }) => {
+    async (args) => {
+      const { since, until } = periodFrom(args);
       const rows = await client.getInsights({
-        level: "campaign", since, until, datePreset: date_preset, accountId: account_id,
+        level: "campaign", since, until, datePreset: args.date_preset, accountId: accountIdFrom(args),
       });
       const periodoLabel =
-        since && until ? `${since} → ${until}` : date_preset ?? "últimos 30 dias";
+        since && until ? `${since} → ${until}` : args.date_preset ?? "últimos 30 dias";
       return json(buildAccountReport(rows, periodoLabel));
     }
   );
@@ -287,15 +363,16 @@ Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (lead
     `Gera um relatório da conta em PDF com layout A4 paginado, prévia PNG, resumo executivo e leitura por objetivo. Retorna os caminhos dos arquivos.
 Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
     {
-      since: z.string().describe("Início do período (YYYY-MM-DD)"),
-      until: z.string().describe("Fim do período (YYYY-MM-DD)"),
+      ...OPTIONAL_PERIOD_SCHEMA,
       client_name: z
         .string()
         .optional()
         .describe("Nome do cliente para o cabeçalho. Se omitido, usa o nome da conta."),
-      account_id: z.string().optional().describe(ACCOUNT_DESC),
+      clientName: z.string().optional().describe("Alias de client_name."),
+      CLIENT_NAME: z.string().optional().describe("Alias de client_name."),
+      ...ACCOUNT_ID_SCHEMA,
     },
-    async ({ since, until, client_name, account_id }) => {
+    async (args) => {
       if (process.env.VERCEL) {
         return json({
           error:
@@ -303,11 +380,17 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
         });
       }
 
+      const { since, until } = periodFrom(args);
+      const periodSince = requireValue(since, "since");
+      const periodUntil = requireValue(until, "until");
+      const account_id = accountIdFrom(args);
+      const client_name = args.client_name ?? args.clientName ?? args.CLIENT_NAME;
+
       // 1) Totais por campanha (tabela) e 2) série diária (gráfico)
       const [accountRows, dailyRows] = await Promise.all([
-        client.getInsights({ level: "campaign", since, until, accountId: account_id }),
+        client.getInsights({ level: "campaign", since: periodSince, until: periodUntil, accountId: account_id }),
         client.getInsights({
-          level: "campaign", since, until, timeIncrement: 1, accountId: account_id,
+          level: "campaign", since: periodSince, until: periodUntil, timeIncrement: 1, accountId: account_id,
         }),
       ]);
 
@@ -317,7 +400,7 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
         cliente = (acc.name as string) ?? "Relatório Meta Ads";
       }
 
-      const model = buildPdfModel(cliente, `${since} a ${until}`, accountRows, dailyRows);
+      const model = buildPdfModel(cliente, `${periodSince} a ${periodUntil}`, accountRows, dailyRows);
       const pdfModulePath = String.fromCharCode(46, 47, 112, 100, 102, 46, 106, 115);
       const { generatePdf } = (await import(pdfModulePath)) as {
         generatePdf: (model: ReturnType<typeof buildPdfModel>, clienteSlug: string) => Promise<{
