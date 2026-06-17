@@ -494,3 +494,61 @@ export function buildAccountReport(
     mensagem: linhas.join("\n"),
   };
 }
+
+// ─── Modelo de dados para o PDF ───────────────────────────────────────────────
+
+const CONVERSION_CATEGORIES = new Set(["lead_form", "messages", "sales"]);
+
+/**
+ * Monta o objeto consumido pelo template HTML do PDF: cabeçalho, cards de
+ * resumo, tabela de campanhas e a série diária (gasto + resultados por dia).
+ *
+ * @param accountRows linhas ao nível de campanha do período (uma por campanha)
+ * @param dailyRows   linhas ao nível de campanha com time_increment=1 (por dia)
+ */
+export function buildPdfModel(
+  clientName: string,
+  periodoLabel: string,
+  accountRows: Insight[],
+  dailyRows: Insight[]
+) {
+  const account = buildAccountReport(accountRows, periodoLabel);
+
+  // Série diária: agrupa por data, somando gasto e resultados de conversão.
+  const byDay: Record<string, { gasto: number; resultados: number }> = {};
+  for (const r of dailyRows) {
+    const day = r.date_start;
+    if (!day) continue;
+    const config = detectCategory(r.campaign_name ?? "", r.objective);
+    const agg = aggregate([r], config);
+    if (!byDay[day]) byDay[day] = { gasto: 0, resultados: 0 };
+    byDay[day].gasto += agg.totalSpend;
+    if (CONVERSION_CATEGORIES.has(config.category)) {
+      byDay[day].resultados += agg.totalConversoes;
+    }
+  }
+
+  const serieDiaria = Object.keys(byDay)
+    .sort()
+    .map((day) => ({
+      data: dateBR(day),
+      gasto: Math.round(byDay[day].gasto * 100) / 100,
+      resultados: byDay[day].resultados,
+    }));
+
+  const leads = account.totais.por_categoria["lead_form"] ?? 0;
+  const conversas = account.totais.por_categoria["messages"] ?? 0;
+
+  return {
+    cliente: clientName,
+    periodo: periodoLabel,
+    geradoEm: new Date().toLocaleString("pt-BR"),
+    resumo: {
+      gastoTotal: account.totais.gasto,
+      leads,
+      conversas,
+    },
+    campanhas: account.campanhas,
+    serieDiaria,
+  };
+}

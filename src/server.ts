@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
-import { buildReport, buildAccountReport } from "./report.js";
+import { buildReport, buildAccountReport, buildPdfModel } from "./report.js";
+import { generatePdf } from "./pdf.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -20,8 +21,12 @@ const json = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
 
-export function createMcpServer(accessToken: string, adAccountId?: string): McpServer {
-  const client = new MetaAdsClient({ accessToken, adAccountId });
+export function createMcpServer(
+  accessToken: string,
+  adAccountId?: string,
+  allowlist?: string[]
+): McpServer {
+  const client = new MetaAdsClient({ accessToken, adAccountId, allowlist });
 
   const server = new McpServer({ name: "meta-ads-mcp", version: "1.0.0" });
 
@@ -171,6 +176,47 @@ Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (lead
       const periodoLabel =
         since && until ? `${since} → ${until}` : date_preset ?? "últimos 30 dias";
       return json(buildAccountReport(rows, periodoLabel));
+    }
+  );
+
+  // ─── Relatório em PDF ─────────────────────────────────────────────────────────
+
+  server.tool(
+    "generate_report_pdf",
+    `Gera um relatório da conta em PDF (cabeçalho, cards de resumo, gráfico de gasto/resultados por dia e tabela de campanhas) e salva no disco. Retorna o caminho do arquivo.
+Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
+    {
+      since: z.string().describe("Início do período (YYYY-MM-DD)"),
+      until: z.string().describe("Fim do período (YYYY-MM-DD)"),
+      client_name: z
+        .string()
+        .optional()
+        .describe("Nome do cliente para o cabeçalho. Se omitido, usa o nome da conta."),
+      account_id: z.string().optional().describe(ACCOUNT_DESC),
+    },
+    async ({ since, until, client_name, account_id }) => {
+      // 1) Totais por campanha (tabela) e 2) série diária (gráfico)
+      const [accountRows, dailyRows] = await Promise.all([
+        client.getInsights({ level: "campaign", since, until, accountId: account_id }),
+        client.getInsights({
+          level: "campaign", since, until, timeIncrement: 1, accountId: account_id,
+        }),
+      ]);
+
+      let cliente = client_name;
+      if (!cliente) {
+        const acc = await client.getAdAccount(account_id);
+        cliente = (acc.name as string) ?? "Relatório Meta Ads";
+      }
+
+      const model = buildPdfModel(cliente, `${since} a ${until}`, accountRows, dailyRows);
+      const filePath = await generatePdf(model, cliente);
+
+      return {
+        content: [
+          { type: "text", text: `PDF gerado com sucesso:\n${filePath}` },
+        ],
+      };
     }
   );
 

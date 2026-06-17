@@ -29,14 +29,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const accessToken = process.env.META_ACCESS_TOKEN;
   const adAccountId = process.env.META_AD_ACCOUNT_ID;
+  const allowlist = process.env.META_ACCOUNT_ALLOWLIST?.split(",").filter(Boolean);
 
-  if (!accessToken || !adAccountId) {
+  if (!accessToken) {
     res.status(500).json({ error: "Server not configured" });
     return;
   }
 
   try {
-    const server = createMcpServer(accessToken, adAccountId);
+    const server = createMcpServer(accessToken, adAccountId, allowlist);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless — funciona bem com serverless
     });

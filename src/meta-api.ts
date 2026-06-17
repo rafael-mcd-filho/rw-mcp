@@ -12,7 +12,16 @@ export interface MetaApiConfig {
   accessToken: string;
   /** Conta padrão usada quando uma chamada não especifica account_id. */
   adAccountId?: string;
+  /** Lista de contas permitidas (ids). Se vazia, todas são permitidas. */
+  allowlist?: string[];
 }
+
+/** Códigos de erro da Meta considerados transitórios (vale repetir). */
+const RETRYABLE_META_CODES = new Set([1, 2, 4, 17, 32, 341, 613, 80000, 80003, 80004]);
+const MAX_RETRIES = 3;
+const MAX_PAGES = 50;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export interface AdAccount {
   id: string;
@@ -97,6 +106,8 @@ export interface InsightsOptions {
   datePreset?: string;
   breakdown?: string;
   limit?: number;
+  /** Quebra os resultados por dia (1) quando definido. Útil para gráficos. */
+  timeIncrement?: number;
 }
 
 export interface ComparisonResult {
@@ -107,12 +118,16 @@ export interface ComparisonResult {
 export class MetaAdsClient {
   private accessToken: string;
   private defaultAccountId?: string;
+  private allowlist: Set<string>;
 
   constructor(config: MetaApiConfig) {
     this.accessToken = config.accessToken;
     this.defaultAccountId = config.adAccountId
       ? normalizeAccountId(config.adAccountId)
       : undefined;
+    this.allowlist = new Set(
+      (config.allowlist ?? []).map((id) => normalizeAccountId(id.trim()))
+    );
   }
 
   /** Resolve a conta a usar: override da chamada ou padrão do servidor. */
@@ -123,52 +138,105 @@ export class MetaAdsClient {
         "Nenhuma conta especificada. Passe account_id ou configure META_AD_ACCOUNT_ID."
       );
     }
-    return normalizeAccountId(id);
+    const normalized = normalizeAccountId(id);
+    if (this.allowlist.size > 0 && !this.allowlist.has(normalized)) {
+      throw new Error(
+        `Conta ${normalized} não está na allow-list (META_ACCOUNT_ALLOWLIST).`
+      );
+    }
+    return normalized;
+  }
+
+  /** GET com retry/backoff em erros transitórios e rate limit. */
+  private async fetchJson<T>(url: string): Promise<T> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url);
+      } catch (e) {
+        // Erro de rede — vale repetir
+        lastError = e instanceof Error ? e : new Error(String(e));
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
+
+      const data = (await response.json()) as {
+        error?: { message: string; code: number };
+      } & T;
+      const err = (data as { error?: { message: string; code: number } }).error;
+
+      if (response.ok && !err) return data;
+
+      const code = err?.code ?? 0;
+      const retryable =
+        response.status === 429 ||
+        response.status >= 500 ||
+        RETRYABLE_META_CODES.has(code);
+
+      lastError = new Error(err?.message ?? `HTTP ${response.status}`);
+      if (!retryable || attempt === MAX_RETRIES) throw lastError;
+
+      await sleep(500 * 2 ** attempt); // backoff: 0,5s → 1s → 2s
+    }
+
+    throw lastError ?? new Error("Falha desconhecida na requisição");
+  }
+
+  private buildUrl(endpoint: string, params: Record<string, string>): string {
+    const url = new URL(`${META_API_BASE}/${endpoint}`);
+    url.searchParams.set("access_token", this.accessToken);
+    for (const [key, value] of Object.entries(params)) {
+      url.searchParams.set(key, value);
+    }
+    return url.toString();
   }
 
   private async request<T>(
     endpoint: string,
     params: Record<string, string> = {}
   ): Promise<T> {
-    const url = new URL(`${META_API_BASE}/${endpoint}`);
-    url.searchParams.set("access_token", this.accessToken);
-    for (const [key, value] of Object.entries(params)) {
-      url.searchParams.set(key, value);
+    return this.fetchJson<T>(this.buildUrl(endpoint, params));
+  }
+
+  /** Igual a request, mas segue paging.next e concatena todas as páginas. */
+  private async requestPaged<T>(
+    endpoint: string,
+    params: Record<string, string> = {}
+  ): Promise<T[]> {
+    let url: string | undefined = this.buildUrl(endpoint, params);
+    const out: T[] = [];
+    let pages = 0;
+
+    while (url && pages < MAX_PAGES) {
+      const page: { data: T[]; paging?: { next?: string } } =
+        await this.fetchJson(url);
+      out.push(...(page.data ?? []));
+      url = page.paging?.next;
+      pages++;
     }
-
-    const response = await fetch(url.toString());
-    const data = (await response.json()) as {
-      error?: { message: string; type: string; code: number };
-    } & T;
-
-    if (!response.ok || (data as { error?: { message: string } }).error) {
-      const err = (data as { error?: { message: string } }).error;
-      throw new Error(err?.message ?? `HTTP ${response.status}`);
-    }
-
-    return data;
+    return out;
   }
 
   /** Lista as contas de anúncio acessíveis pelo token. */
   async getAdAccounts(): Promise<AdAccount[]> {
-    const result = await this.request<{ data: AdAccount[] }>("me/adaccounts", {
+    return this.requestPaged<AdAccount>("me/adaccounts", {
       fields: "id,account_id,name,account_status,currency",
       limit: "200",
     });
-    return result.data;
   }
 
   async getCampaigns(status?: string, accountId?: string): Promise<Campaign[]> {
     const fields =
       "id,name,status,objective,daily_budget,lifetime_budget,start_time,stop_time,created_time,updated_time";
-    const params: Record<string, string> = { fields };
+    const params: Record<string, string> = { fields, limit: "200" };
     if (status) params["effective_status"] = `["${status}"]`;
 
-    const result = await this.request<{ data: Campaign[] }>(
+    return this.requestPaged<Campaign>(
       `${this.resolveAccount(accountId)}/campaigns`,
       params
     );
-    return result.data;
   }
 
   async getCampaign(campaignId: string): Promise<Campaign> {
@@ -187,12 +255,12 @@ export class MetaAdsClient {
     const params: Record<string, string> = { fields };
     if (status) params["effective_status"] = `["${status}"]`;
 
+    params["limit"] = "200";
     const endpoint = campaignId
       ? `${campaignId}/adsets`
       : `${this.resolveAccount(accountId)}/adsets`;
 
-    const result = await this.request<{ data: AdSet[] }>(endpoint, params);
-    return result.data;
+    return this.requestPaged<AdSet>(endpoint, params);
   }
 
   async getAds(
@@ -206,6 +274,7 @@ export class MetaAdsClient {
     const params: Record<string, string> = { fields };
     if (status) params["effective_status"] = `["${status}"]`;
 
+    params["limit"] = "200";
     let endpoint: string;
     if (adSetId) {
       endpoint = `${adSetId}/ads`;
@@ -215,8 +284,7 @@ export class MetaAdsClient {
       endpoint = `${this.resolveAccount(accountId)}/ads`;
     }
 
-    const result = await this.request<{ data: Ad[] }>(endpoint, params);
-    return result.data;
+    return this.requestPaged<Ad>(endpoint, params);
   }
 
   // Busca insights para um único período
@@ -228,6 +296,7 @@ export class MetaAdsClient {
       until,
       datePreset,
       breakdown,
+      timeIncrement,
       limit = 3000,
     } = options;
 
@@ -246,6 +315,7 @@ export class MetaAdsClient {
     }
 
     if (breakdown) params["breakdowns"] = breakdown;
+    if (timeIncrement) params["time_increment"] = String(timeIncrement);
 
     const endpoint =
       entityId && level !== "account"
