@@ -296,6 +296,13 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
     async ({ since, until, client_name, account_id }) => {
+      if (process.env.VERCEL) {
+        return json({
+          error:
+            "A geracao de PDF ainda nao esta habilitada no Vercel. Use o MCP local para gerar PDF ou configure Chromium serverless antes de usar esta ferramenta em producao.",
+        });
+      }
+
       // 1) Totais por campanha (tabela) e 2) série diária (gráfico)
       const [accountRows, dailyRows] = await Promise.all([
         client.getInsights({ level: "campaign", since, until, accountId: account_id }),
