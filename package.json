@@ -1,7 +1,7 @@
 {
-  "name": "meta-ads-mcp",
+  "name": "rw-mcp",
   "version": "1.0.0",
-  "description": "MCP Server para Meta Ads API",
+  "description": "MCP Server para integrações RW: Meta Ads, relatórios e automações",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "1.12.0",
     "puppeteer-core": "^23.0.0"
   },
   "devDependencies": {

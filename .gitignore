@@ -1,6 +1,8 @@
 node_modules/
 dist/
+tmp/
 .env
 .env.local
+claude_desktop_config.json
 .vercel/
 *.local

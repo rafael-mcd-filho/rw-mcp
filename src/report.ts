@@ -4,6 +4,13 @@
 
 import type { Insight } from "./meta-api.js";
 import {
+  mergeActionSummary,
+  pickActionValue,
+  summarizeActionMetrics,
+  toNumber,
+  type ActionSummary,
+} from "./action-normalizer.js";
+import {
   detectCategory,
   type CategoryConfig,
   type ObjectiveCategory,
@@ -68,20 +75,34 @@ export interface Aggregated {
   avgCPM: number;
   avgCPP: number;
   avgCTR: number;
+  avgFrequency: number;
   cpa: number;
+  totalActionValue: number;
+  purchaseRoas: number;
   /** Todos os action_types somados, para transparência/correção manual. */
   actionsDisponiveis: Record<string, number>;
+  /** Actions agrupadas por nome canonico, para leitura sem duplicidade visual. */
+  actionsNormalizadas: Record<string, number>;
+  costPerActionType: Record<string, number>;
+  costPerActionTypeNormalizado: Record<string, number>;
+  actionValues: Record<string, number>;
+  actionValuesNormalizado: Record<string, number>;
+  rankings: {
+    quality?: string;
+    engagementRate?: string;
+    conversionRate?: string;
+  };
 }
 
 /** Escolhe o action_type de conversão pela prioridade da categoria. */
 function pickActionType(
-  actionsMap: Record<string, number>,
+  actionsSummary: ActionSummary,
   config: CategoryConfig,
   override?: string
 ): string | null {
   if (override) return override;
   for (const at of config.actionPriority) {
-    if (actionsMap[at] > 0) return at;
+    if (pickActionValue(actionsSummary, at) > 0) return at;
   }
   return config.actionPriority[0] ?? null;
 }
@@ -97,7 +118,12 @@ export function aggregate(
   let totalImpressions = 0;
   let totalReach = 0;
   let totalThruplay = 0;
-  const actionsMap: Record<string, number> = {};
+  const actionsSummary: ActionSummary = { raw: {}, normalized: {} };
+  const costSummary: ActionSummary = { raw: {}, normalized: {} };
+  const valueSummary: ActionSummary = { raw: {}, normalized: {} };
+  let purchaseRoasTotal = 0;
+  let purchaseRoasCount = 0;
+  const rankings: Aggregated["rankings"] = {};
 
   let date_start = rows[0]?.date_start ?? "";
   let date_stop = rows[0]?.date_stop ?? "";
@@ -110,22 +136,27 @@ export function aggregate(
     if (r.date_start < date_start) date_start = r.date_start;
     if (r.date_stop > date_stop) date_stop = r.date_stop;
 
-    if (Array.isArray(r.actions)) {
-      for (const a of r.actions) {
-        actionsMap[a.action_type] =
-          (actionsMap[a.action_type] ?? 0) + toInt(a.value);
-      }
-    }
+    mergeActionSummary(actionsSummary, summarizeActionMetrics(r.actions));
+    mergeActionSummary(costSummary, summarizeActionMetrics(r.cost_per_action_type));
+    mergeActionSummary(valueSummary, summarizeActionMetrics(r.action_values));
+
     if (Array.isArray(r.video_thruplay_watched_actions)) {
       for (const a of r.video_thruplay_watched_actions) {
         totalThruplay += toInt(a.value);
       }
     }
+    for (const roas of r.purchase_roas ?? []) {
+      purchaseRoasTotal += toNumber(roas.value);
+      purchaseRoasCount += 1;
+    }
+    rankings.quality ??= r.quality_ranking;
+    rankings.engagementRate ??= r.engagement_rate_ranking;
+    rankings.conversionRate ??= r.conversion_rate_ranking;
   }
 
-  const actionTypeUsado = pickActionType(actionsMap, config, override);
+  const actionTypeUsado = pickActionType(actionsSummary, config, override);
   const totalConversoes = actionTypeUsado
-    ? actionsMap[actionTypeUsado] ?? 0
+    ? pickActionValue(actionsSummary, actionTypeUsado)
     : 0;
 
   // Métricas derivadas calculadas a partir dos totais (ponderadas/corretas).
@@ -133,7 +164,12 @@ export function aggregate(
   const avgCPM = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
   const avgCPP = totalReach > 0 ? (totalSpend / totalReach) * 1000 : 0;
   const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+  const avgFrequency = totalReach > 0 ? totalImpressions / totalReach : 0;
   const cpa = totalConversoes > 0 ? totalSpend / totalConversoes : 0;
+  const totalActionValue = Object.values(valueSummary.normalized).reduce(
+    (sum, value) => sum + value,
+    0
+  );
 
   return {
     date_start,
@@ -149,8 +185,17 @@ export function aggregate(
     avgCPM,
     avgCPP,
     avgCTR,
+    avgFrequency,
     cpa,
-    actionsDisponiveis: actionsMap,
+    totalActionValue,
+    purchaseRoas: purchaseRoasCount > 0 ? purchaseRoasTotal / purchaseRoasCount : 0,
+    actionsDisponiveis: actionsSummary.raw,
+    actionsNormalizadas: actionsSummary.normalized,
+    costPerActionType: costSummary.raw,
+    costPerActionTypeNormalizado: costSummary.normalized,
+    actionValues: valueSummary.raw,
+    actionValuesNormalizado: valueSummary.normalized,
+    rankings,
   };
 }
 
@@ -399,6 +444,9 @@ export function buildReport(input: ReportInput) {
       action_type_usado: atual.actionTypeUsado,
     },
     action_types_disponiveis: atual.actionsDisponiveis,
+    action_types_normalizados: atual.actionsNormalizadas,
+    cost_per_action_type: atual.costPerActionType,
+    action_values: atual.actionValues,
   };
 
   if (input.comparisonRows && input.comparisonRows.length) {
@@ -423,6 +471,8 @@ export function buildReport(input: ReportInput) {
 }
 
 // ─── Relatório da conta inteira ───────────────────────────────────────────────
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** Resultado principal de uma campanha (valor + custo), conforme o objetivo. */
 function campaignResult(config: CategoryConfig, a: Aggregated) {
@@ -452,10 +502,26 @@ export function buildAccountReport(
       emoji: config.emoji,
       headlineLabel: config.headlineLabel,
       costLabel: config.costLabel,
+      categoriaLabel: config.title,
+      primaryMetric: config.primaryMetric,
       gasto: agg.totalSpend,
       resultado: valor,
       custo,
       cliques: agg.totalClicks,
+      impressoes: agg.totalImpressions,
+      alcance: agg.totalReach,
+      ctr: agg.avgCTR,
+      cpc: agg.avgCPC,
+      cpm: agg.avgCPM,
+      frequencia: agg.avgFrequency,
+      thruplay: agg.totalThruplay,
+      valorConversao: agg.totalActionValue,
+      roas: agg.purchaseRoas,
+      rankings: agg.rankings,
+      actionTypeUsado: agg.actionTypeUsado,
+      actionsNormalizadas: agg.actionsNormalizadas,
+      costPerActionTypeNormalizado: agg.costPerActionTypeNormalizado,
+      actionValuesNormalizado: agg.actionValuesNormalizado,
     };
   });
 
@@ -499,6 +565,183 @@ export function buildAccountReport(
 
 const CONVERSION_CATEGORIES = new Set(["lead_form", "messages", "sales"]);
 
+type PdfReportKind =
+  | "mixed"
+  | "lead"
+  | "messages"
+  | "awareness"
+  | "profile"
+  | "sales"
+  | "engagement";
+
+interface PdfKpiCard {
+  label: string;
+  value: string;
+  note: string;
+  tone: "red" | "black";
+}
+
+interface PdfObjectiveSummary {
+  category: ObjectiveCategory;
+  label: string;
+  headlineLabel: string;
+  costLabel: string;
+  primaryMetric: "conversion" | "reach";
+  campaignsCount: number;
+  gasto: number;
+  resultado: number;
+  custo: number;
+  cliques: number;
+  impressoes: number;
+  alcance: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  frequencia: number;
+  valorConversao: number;
+  roas: number;
+}
+
+export interface PdfReportModel {
+  kind: PdfReportKind;
+  cliente: string;
+  periodo: string;
+  geradoEm: string;
+  meta: {
+    clientName: string;
+    periodLabel: string;
+    channels: string[];
+    sourceLabel: string;
+  };
+  resumo: {
+    gastoTotal: number;
+    leads: number;
+    conversas: number;
+    kpis: PdfKpiCard[];
+    leituraExecutiva: string[];
+  };
+  objetivoPrincipal: PdfObjectiveSummary | null;
+  objetivos: PdfObjectiveSummary[];
+  campanhas: ReturnType<typeof buildAccountReport>["campanhas"];
+  serieDiaria: Array<{ data: string; gasto: number; resultados: number }>;
+  notasMetodologicas: string[];
+  proximosPassos: string[];
+}
+
+function summarizeObjectives(
+  campanhas: ReturnType<typeof buildAccountReport>["campanhas"]
+): PdfObjectiveSummary[] {
+  const grouped: Partial<Record<ObjectiveCategory, PdfObjectiveSummary>> = {};
+
+  for (const c of campanhas) {
+    const existing = grouped[c.categoria];
+    if (!existing) {
+      grouped[c.categoria] = {
+        category: c.categoria,
+        label: c.categoriaLabel,
+        headlineLabel: c.headlineLabel,
+        costLabel: c.costLabel,
+        primaryMetric: c.primaryMetric,
+        campaignsCount: 0,
+        gasto: 0,
+        resultado: 0,
+        custo: 0,
+        cliques: 0,
+        impressoes: 0,
+        alcance: 0,
+        ctr: 0,
+        cpc: 0,
+        cpm: 0,
+        frequencia: 0,
+        valorConversao: 0,
+        roas: 0,
+      };
+    }
+
+    const target = grouped[c.categoria]!;
+    target.campaignsCount += 1;
+    target.gasto += c.gasto;
+    target.resultado += c.resultado;
+    target.cliques += c.cliques;
+    target.impressoes += c.impressoes;
+    target.alcance += c.alcance;
+    target.valorConversao += c.valorConversao;
+  }
+
+  return Object.values(grouped)
+    .map((o) => ({
+      ...o,
+      gasto: round2(o.gasto),
+      resultado: Math.round(o.resultado),
+      custo: o.resultado > 0 ? round2(o.gasto / o.resultado) : 0,
+      cpc: o.cliques > 0 ? round2(o.gasto / o.cliques) : 0,
+      cpm: o.impressoes > 0 ? round2((o.gasto / o.impressoes) * 1000) : 0,
+      ctr: o.impressoes > 0 ? round2((o.cliques / o.impressoes) * 100) : 0,
+      frequencia: o.alcance > 0 ? round2(o.impressoes / o.alcance) : 0,
+      roas: o.gasto > 0 ? round2(o.valorConversao / o.gasto) : 0,
+    }))
+    .sort((a, b) => b.gasto - a.gasto);
+}
+
+function buildExecutiveRead(
+  objetivos: PdfObjectiveSummary[],
+  totalGasto: number
+): string[] {
+  const principal = objetivos[0];
+  const apoio = objetivos[1];
+  const linhas: string[] = [];
+
+  if (principal) {
+    const share =
+      totalGasto > 0 ? Math.round((principal.gasto / totalGasto) * 100) : 0;
+    linhas.push(
+      `${principal.label} concentrou ${share}% do investimento e entregou ${intBR(
+        principal.resultado
+      )} em ${principal.headlineLabel.toLowerCase()}.`
+    );
+  }
+
+  if (apoio) {
+    linhas.push(
+      `${apoio.label} atuou como apoio, com ${moneyBR(apoio.gasto)} investidos e ${intBR(
+        apoio.resultado
+      )} em ${apoio.headlineLabel.toLowerCase()}.`
+    );
+  }
+
+  if (!linhas.length) {
+    linhas.push(
+      "Nao houve campanhas com entrega suficiente para uma leitura consolidada no periodo."
+    );
+  }
+
+  return linhas;
+}
+
+function buildNextSteps(objetivos: PdfObjectiveSummary[]): string[] {
+  const principal = objetivos[0];
+  const passos = [
+    "Revisar as campanhas de maior gasto para preservar verba nos conjuntos com melhor custo por resultado.",
+    "Separar leitura de aquisicao e presenca para evitar comparar objetivos com metricas diferentes.",
+    "Manter a fonte dos dados declarada no rodape quando houver CRM, planilha ou print complementar.",
+  ];
+
+  if (principal?.category === "awareness") {
+    passos[0] =
+      "Acompanhar frequencia, CPM e alcance antes de aumentar investimento em reconhecimento.";
+  }
+  if (principal?.category === "messages") {
+    passos[0] =
+      "Cruzar conversas iniciadas com atendimento real antes de tratar conversa como venda.";
+  }
+  if (principal?.category === "lead_form") {
+    passos[0] =
+      "Cruzar leads de plataforma com CRM para separar volume gerado de lead qualificado.";
+  }
+
+  return passos;
+}
+
 /**
  * Monta o objeto consumido pelo template HTML do PDF: cabeçalho, cards de
  * resumo, tabela de campanhas e a série diária (gasto + resultados por dia).
@@ -511,7 +754,7 @@ export function buildPdfModel(
   periodoLabel: string,
   accountRows: Insight[],
   dailyRows: Insight[]
-) {
+): PdfReportModel {
   const account = buildAccountReport(accountRows, periodoLabel);
 
   // Série diária: agrupa por data, somando gasto e resultados de conversão.
@@ -532,23 +775,83 @@ export function buildPdfModel(
     .sort()
     .map((day) => ({
       data: dateBR(day),
-      gasto: Math.round(byDay[day].gasto * 100) / 100,
+      gasto: round2(byDay[day].gasto),
       resultados: byDay[day].resultados,
     }));
 
   const leads = account.totais.por_categoria["lead_form"] ?? 0;
   const conversas = account.totais.por_categoria["messages"] ?? 0;
+  const objetivos = summarizeObjectives(account.campanhas);
+  const objetivoPrincipal = objetivos[0] ?? null;
+  const totalCliques = account.campanhas.reduce((s, c) => s + c.cliques, 0);
+  const totalAlcance = account.campanhas.reduce((s, c) => s + c.alcance, 0);
+  const mainKpi = objetivoPrincipal
+    ? {
+        label: objetivoPrincipal.headlineLabel,
+        value: intBR(objetivoPrincipal.resultado),
+        note:
+          objetivoPrincipal.resultado > 0
+            ? `${objetivoPrincipal.costLabel}: ${moneyBR(objetivoPrincipal.custo)}`
+            : "Sem resultado registrado no periodo",
+        tone: "black" as const,
+      }
+    : {
+        label: "Resultado principal",
+        value: "0",
+        note: "Sem entrega registrada no periodo",
+        tone: "black" as const,
+      };
 
   return {
+    kind: "mixed",
     cliente: clientName,
     periodo: periodoLabel,
     geradoEm: new Date().toLocaleString("pt-BR"),
+    meta: {
+      clientName,
+      periodLabel: periodoLabel,
+      channels: ["Meta Ads"],
+      sourceLabel: "Fonte: API de Marketing da Meta",
+    },
     resumo: {
       gastoTotal: account.totais.gasto,
       leads,
       conversas,
+      kpis: [
+        {
+          label: "Investimento total",
+          value: moneyBR(account.totais.gasto),
+          note: `${account.campanhas.length} campanhas com entrega`,
+          tone: "red",
+        },
+        mainKpi,
+        {
+          label: "Cliques",
+          value: intBR(totalCliques),
+          note:
+            account.totais.gasto > 0 && totalCliques > 0
+              ? `CPC medio: ${moneyBR(account.totais.gasto / totalCliques)}`
+              : "Sem cliques no periodo",
+          tone: "red",
+        },
+        {
+          label: "Alcance",
+          value: intBR(totalAlcance),
+          note: "Soma por campanha, pode conter sobreposicao",
+          tone: "black",
+        },
+      ],
+      leituraExecutiva: buildExecutiveRead(objetivos, account.totais.gasto),
     },
+    objetivoPrincipal,
+    objetivos,
     campanhas: account.campanhas,
     serieDiaria,
+    notasMetodologicas: [
+      "Resultados sao lidos conforme o objetivo detectado de cada campanha.",
+      "Alcance somado por campanha pode conter usuarios repetidos entre campanhas.",
+      "Conversas, leads e visitas representam eventos de plataforma; qualificacao comercial depende de CRM ou atendimento.",
+    ],
+    proximosPassos: buildNextSteps(objetivos),
   };
 }

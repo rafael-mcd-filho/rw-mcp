@@ -1,11 +1,13 @@
-// Renderiza o template HTML preenchido com os dados do relatório e gera um PDF
-// usando o Chrome/Edge já instalado no sistema (via puppeteer-core).
+// Renderiza o relatório em HTML paginado e gera PDF + PNG de prévia usando
+// Chrome/Edge instalado no sistema (via puppeteer-core).
 
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import puppeteer from "puppeteer-core";
+import type { PdfReportModel } from "./report.js";
+import { renderPdfHtml } from "./pdf-template.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -29,9 +31,7 @@ function findBrowser(): string {
 }
 
 function templatePath(): string {
-  if (process.env.META_REPORT_TEMPLATE) return process.env.META_REPORT_TEMPLATE;
-  // dist/src/pdf.js → ../../templates/relatorio.html
-  return join(here, "..", "..", "templates", "relatorio.html");
+  return process.env.META_REPORT_TEMPLATE ?? "";
 }
 
 function outputDir(): string {
@@ -52,24 +52,39 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
-/** Gera o PDF e retorna o caminho do arquivo salvo. */
-export async function generatePdf(
-  data: unknown,
-  clienteSlug: string
-): Promise<string> {
-  const template = readFileSync(templatePath(), "utf-8");
+export interface GeneratedPdf {
+  pdfPath: string;
+  previewPath: string;
+  pageCount: number;
+}
 
-  // Injeta os dados antes do </head> para o script do template consumir.
-  const html = template.replace(
+function renderHtml(data: PdfReportModel): string {
+  const customTemplate = templatePath();
+  if (!customTemplate) return renderPdfHtml(data);
+
+  const template = readFileSync(customTemplate, "utf-8");
+  return template.replace(
     "</head>",
     `<script>window.__DATA__ = ${JSON.stringify(data)};</script></head>`
   );
+}
 
+/** Gera o PDF e retorna os caminhos dos arquivos salvos. */
+export async function generatePdf(
+  data: PdfReportModel,
+  clienteSlug: string
+): Promise<GeneratedPdf> {
   const stamp = new Date().toISOString().slice(0, 10);
-  const outPath = join(
+  const baseName = `relatorio-${slugify(clienteSlug)}-${stamp}`;
+  const pdfPath = join(
     outputDir(),
-    `relatorio-${slugify(clienteSlug)}-${stamp}.pdf`
+    `${baseName}.pdf`
   );
+  const previewPath = join(
+    outputDir(),
+    `${baseName}-preview.png`
+  );
+  const html = renderHtml(data);
 
   const browser = await puppeteer.launch({
     executablePath: findBrowser(),
@@ -79,23 +94,51 @@ export async function generatePdf(
 
   try {
     const page = await browser.newPage();
+    await page.setViewport({
+      width: 1190,
+      height: 1684,
+      deviceScaleFactor: 1,
+    });
     await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
-    // Espera o template sinalizar que terminou (gráfico renderizado).
+    // Espera o template sinalizar que terminou.
     await page
       .waitForFunction("window.__READY__ === true", { timeout: 10000 })
       .catch(() => {
-        /* segue mesmo sem o sinal, melhor um PDF parcial que erro */
+        /* Mantem compatibilidade com templates customizados antigos. */
       });
 
+    const pageMetrics = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".page")].map((element, index) => ({
+        page: index + 1,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
+        overflow: element.scrollHeight - element.clientHeight > 2,
+      }))
+    );
+    const overflowPages = pageMetrics.filter((metric) => metric.overflow);
+    if (overflowPages.length) {
+      throw new Error(
+        `Conteúdo excedeu a folha A4 nas páginas: ${overflowPages
+          .map((metric) => metric.page)
+          .join(", ")}`
+      );
+    }
+
     await page.pdf({
-      path: outPath,
+      path: pdfPath,
       format: "A4",
       printBackground: true,
-      margin: { top: "12mm", bottom: "12mm", left: "10mm", right: "10mm" },
+      preferCSSPageSize: true,
+      margin: { top: "0", bottom: "0", left: "0", right: "0" },
     });
+    await page.screenshot({ path: previewPath, fullPage: true });
+
+    return {
+      pdfPath,
+      previewPath,
+      pageCount: pageMetrics.length || 1,
+    };
   } finally {
     await browser.close();
   }
-
-  return outPath;
 }

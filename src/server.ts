@@ -17,6 +17,30 @@ const DATE_PRESETS = [
   "this_month", "last_month", "this_quarter", "last_year", "this_year",
 ] as const;
 
+const BREAKDOWNS = [
+  "age",
+  "gender",
+  "country",
+  "region",
+  "publisher_platform",
+  "platform_position",
+  "device_platform",
+  "impression_device",
+  "frequency_value",
+  "hourly_stats_aggregated_by_advertiser_time_zone",
+  "hourly_stats_aggregated_by_audience_time_zone",
+  "place_page_id",
+  "product_id",
+  "placement",
+] as const;
+
+const ACTION_BREAKDOWNS = [
+  "action_type",
+  "action_device",
+  "action_destination",
+  "action_conversion_device",
+] as const;
+
 const json = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
@@ -28,7 +52,7 @@ export function createMcpServer(
 ): McpServer {
   const client = new MetaAdsClient({ accessToken, adAccountId, allowlist });
 
-  const server = new McpServer({ name: "meta-ads-mcp", version: "1.0.0" });
+  const server = new McpServer({ name: "rw-mcp", version: "1.0.0" });
 
   // ─── Contas ─────────────────────────────────────────────────────────────────
 
@@ -97,21 +121,99 @@ export function createMcpServer(
 
   server.tool(
     "get_insights",
-    "Métricas cruas para UM período: spend, impressions, clicks, cpc, cpm, cpp, ctr, reach, actions e ThruPlay. Use para análises livres.",
+    "Métricas cruas para UM período. Inclui spend, reach, frequency, actions, cost_per_action_type, action_values, ROAS, rankings e métricas de vídeo quando disponíveis.",
     {
       level: z.enum(["account", "campaign", "adset", "ad"]).describe("Nível de agregação"),
       entity_id: z.string().optional().describe("ID da entidade. Omita para a conta inteira."),
       since: z.string().optional().describe("Data início YYYY-MM-DD"),
       until: z.string().optional().describe("Data fim YYYY-MM-DD"),
       date_preset: z.enum(DATE_PRESETS).optional().describe("Período pré-definido (padrão: last_30d)"),
-      breakdown: z.enum(["age", "gender", "country", "region", "placement", "device_platform"]).optional(),
+      breakdown: z.enum(BREAKDOWNS).optional().describe("Quebra única. 'placement' vira publisher_platform + platform_position."),
+      breakdowns: z.array(z.enum(BREAKDOWNS)).optional().describe("Quebras múltiplas."),
+      action_breakdowns: z.array(z.enum(ACTION_BREAKDOWNS)).optional(),
+      action_report_time: z.enum(["impression", "conversion", "mixed"]).optional(),
+      action_attribution_windows: z.array(z.string()).optional().describe("Ex.: ['1d_view','7d_click']"),
+      use_account_attribution: z.boolean().optional(),
+      use_unified_attribution: z.boolean().optional(),
+      filtering: z.array(z.record(z.string(), z.unknown())).optional(),
+      sort: z.string().optional().describe("Ex.: spend_descending"),
+      default_summary: z.boolean().optional(),
       account_id: z.string().optional().describe(ACCOUNT_DESC),
     },
-    async ({ level, entity_id, since, until, date_preset, breakdown, account_id }) =>
+    async ({
+      level,
+      entity_id,
+      since,
+      until,
+      date_preset,
+      breakdown,
+      breakdowns,
+      action_breakdowns,
+      action_report_time,
+      action_attribution_windows,
+      use_account_attribution,
+      use_unified_attribution,
+      filtering,
+      sort,
+      default_summary,
+      account_id,
+    }) =>
       json(await client.getInsights({
-        level, entityId: entity_id, since, until,
-        datePreset: date_preset, breakdown, accountId: account_id,
+        level,
+        entityId: entity_id,
+        since,
+        until,
+        datePreset: date_preset,
+        breakdown: breakdown === "placement" ? undefined : breakdown,
+        breakdowns:
+          breakdown === "placement"
+            ? ["publisher_platform", "platform_position"]
+            : (breakdowns as string[] | undefined)?.filter((item: string) => item !== "placement"),
+        actionBreakdowns: action_breakdowns,
+        actionReportTime: action_report_time,
+        actionAttributionWindows: action_attribution_windows,
+        useAccountAttribution: use_account_attribution,
+        useUnifiedAttribution: use_unified_attribution,
+        filtering,
+        sort,
+        defaultSummary: default_summary,
+        accountId: account_id,
       }))
+  );
+
+  // ─── Pixels / datasets ──────────────────────────────────────────────────────
+
+  server.tool(
+    "list_pixels",
+    "Lista pixels/datasets vinculados à conta. Apenas leitura.",
+    { account_id: z.string().optional().describe(ACCOUNT_DESC) },
+    async ({ account_id }) => json(await client.listPixels(account_id))
+  );
+
+  server.tool(
+    "get_pixel",
+    "Detalhes de um pixel/dataset pelo ID. Apenas leitura.",
+    { pixel_id: z.string().describe("ID do pixel/dataset") },
+    async ({ pixel_id }) => json(await client.getPixel(pixel_id))
+  );
+
+  server.tool(
+    "get_pixel_events",
+    "Resumo de eventos recebidos por um pixel no período informado.",
+    {
+      pixel_id: z.string().describe("ID do pixel/dataset"),
+      start: z.string().optional().describe("Data início YYYY-MM-DD ou timestamp Unix"),
+      end: z.string().optional().describe("Data fim YYYY-MM-DD ou timestamp Unix"),
+    },
+    async ({ pixel_id, start, end }) =>
+      json(await client.getPixelEvents(pixel_id, { start, end }))
+  );
+
+  server.tool(
+    "get_pixel_diagnostics",
+    "Diagnóstico de saúde do pixel: último disparo, eventos recentes, automatic matching e problemas encontrados.",
+    { pixel_id: z.string().describe("ID do pixel/dataset") },
+    async ({ pixel_id }) => json(await client.getPixelDiagnostics(pixel_id))
   );
 
   // ─── Relatório de campanha (detecção automática de objetivo) ──────────────────
@@ -183,7 +285,7 @@ Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (lead
 
   server.tool(
     "generate_report_pdf",
-    `Gera um relatório da conta em PDF (cabeçalho, cards de resumo, gráfico de gasto/resultados por dia e tabela de campanhas) e salva no disco. Retorna o caminho do arquivo.
+    `Gera um relatório da conta em PDF com layout A4 paginado, prévia PNG, resumo executivo e leitura por objetivo. Retorna os caminhos dos arquivos.
 Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
     {
       since: z.string().describe("Início do período (YYYY-MM-DD)"),
@@ -210,11 +312,17 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       }
 
       const model = buildPdfModel(cliente, `${since} a ${until}`, accountRows, dailyRows);
-      const filePath = await generatePdf(model, cliente);
+      const result = await generatePdf(model, cliente);
 
       return {
         content: [
-          { type: "text", text: `PDF gerado com sucesso:\n${filePath}` },
+          {
+            type: "text",
+            text:
+              `PDF gerado com sucesso:\n${result.pdfPath}\n\n` +
+              `Prévia PNG:\n${result.previewPath}\n\n` +
+              `Páginas: ${result.pageCount}`,
+          },
         ],
       };
     }

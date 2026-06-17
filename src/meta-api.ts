@@ -6,7 +6,39 @@ function normalizeAccountId(id: string): string {
 }
 
 export const INSIGHTS_FIELDS =
-  "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,impressions,clicks,cpc,cpm,cpp,ctr,objective,reach,actions,video_thruplay_watched_actions";
+  [
+    "campaign_id",
+    "campaign_name",
+    "adset_id",
+    "adset_name",
+    "ad_id",
+    "ad_name",
+    "spend",
+    "impressions",
+    "clicks",
+    "cpc",
+    "cpm",
+    "cpp",
+    "ctr",
+    "objective",
+    "reach",
+    "frequency",
+    "actions",
+    "cost_per_action_type",
+    "action_values",
+    "conversions",
+    "cost_per_conversion",
+    "purchase_roas",
+    "video_thruplay_watched_actions",
+    "video_avg_time_watched_actions",
+    "video_p25_watched_actions",
+    "video_p50_watched_actions",
+    "video_p75_watched_actions",
+    "video_p100_watched_actions",
+    "quality_ranking",
+    "engagement_rate_ranking",
+    "conversion_rate_ranking",
+  ].join(",");
 
 export interface MetaApiConfig {
   accessToken: string;
@@ -69,6 +101,11 @@ export interface Ad {
   updated_time?: string;
 }
 
+export interface MetaActionMetric {
+  action_type: string;
+  value: string;
+}
+
 export interface Insight {
   campaign_id?: string;
   campaign_name?: string;
@@ -85,10 +122,61 @@ export interface Insight {
   ctr?: string;
   objective?: string;
   reach?: string;
-  actions?: Array<{ action_type: string; value: string }>;
-  video_thruplay_watched_actions?: Array<{ action_type: string; value: string }>;
+  frequency?: string;
+  actions?: MetaActionMetric[];
+  cost_per_action_type?: MetaActionMetric[];
+  action_values?: MetaActionMetric[];
+  conversions?: MetaActionMetric[];
+  cost_per_conversion?: MetaActionMetric[];
+  purchase_roas?: MetaActionMetric[];
+  video_thruplay_watched_actions?: MetaActionMetric[];
+  video_avg_time_watched_actions?: MetaActionMetric[];
+  video_p25_watched_actions?: MetaActionMetric[];
+  video_p50_watched_actions?: MetaActionMetric[];
+  video_p75_watched_actions?: MetaActionMetric[];
+  video_p100_watched_actions?: MetaActionMetric[];
+  quality_ranking?: string;
+  engagement_rate_ranking?: string;
+  conversion_rate_ranking?: string;
   date_start: string;
   date_stop: string;
+}
+
+export interface Pixel {
+  id: string;
+  name?: string;
+  code?: string;
+  creation_time?: string;
+  last_fired_time?: string | number;
+  is_created_by_business?: boolean;
+  is_unavailable?: boolean;
+  can_proxy?: boolean;
+  owner_business?: unknown;
+  automatic_matching_fields?: string[];
+  enable_automatic_matching?: boolean;
+  data_use_setting?: string;
+  first_party_cookie_status?: string;
+}
+
+export interface PixelEventSummary {
+  event: string;
+  count: number;
+}
+
+export interface PixelDiagnostics {
+  pixel_id?: string;
+  name?: string;
+  health: "HEALTHY" | "DEGRADED" | "UNHEALTHY";
+  last_fired_time?: string | number;
+  last_fired_hours_ago: number | null;
+  is_unavailable?: boolean;
+  can_proxy?: boolean;
+  automatic_matching_enabled?: boolean;
+  automatic_matching_fields?: string[];
+  first_party_cookie_status?: string;
+  data_use_setting?: string;
+  events_last_7d: Record<string, number>;
+  issues: string[];
 }
 
 export interface InsightsOptions {
@@ -105,6 +193,16 @@ export interface InsightsOptions {
   // Período pré-definido (alternativa a since/until)
   datePreset?: string;
   breakdown?: string;
+  breakdowns?: string[];
+  actionBreakdowns?: string[];
+  actionReportTime?: "impression" | "conversion" | "mixed";
+  actionAttributionWindows?: string[];
+  useAccountAttribution?: boolean;
+  useUnifiedAttribution?: boolean;
+  filtering?: Array<Record<string, unknown>>;
+  sort?: string;
+  defaultSummary?: boolean;
+  fields?: string[];
   limit?: number;
   /** Quebra os resultados por dia (1) quando definido. Útil para gráficos. */
   timeIncrement?: number;
@@ -114,6 +212,29 @@ export interface ComparisonResult {
   period: Insight[];
   comparison: Insight[];
 }
+
+export interface PixelStatsOptions {
+  start?: string;
+  end?: string;
+  aggregation?: string;
+  event?: string;
+}
+
+const PIXEL_FIELDS = [
+  "id",
+  "name",
+  "code",
+  "creation_time",
+  "last_fired_time",
+  "is_created_by_business",
+  "is_unavailable",
+  "can_proxy",
+  "owner_business",
+  "automatic_matching_fields",
+  "enable_automatic_matching",
+  "data_use_setting",
+  "first_party_cookie_status",
+].join(",");
 
 export class MetaAdsClient {
   private accessToken: string;
@@ -219,6 +340,99 @@ export class MetaAdsClient {
     return out;
   }
 
+  private normalizeInsightOptions(options: InsightsOptions): Record<string, string> {
+    const {
+      level,
+      since,
+      until,
+      datePreset,
+      breakdown,
+      breakdowns,
+      actionBreakdowns,
+      actionReportTime,
+      actionAttributionWindows,
+      useAccountAttribution,
+      useUnifiedAttribution,
+      filtering,
+      sort,
+      defaultSummary,
+      fields,
+      timeIncrement,
+      limit = 3000,
+    } = options;
+
+    const params: Record<string, string> = {
+      fields: fields?.length ? fields.join(",") : INSIGHTS_FIELDS,
+      level,
+      limit: String(limit),
+    };
+
+    if (datePreset) {
+      params["date_preset"] = datePreset;
+    } else if (since && until) {
+      params["time_range"] = JSON.stringify({ since, until });
+    } else {
+      params["date_preset"] = "last_30d";
+    }
+
+    const breakdownList = breakdowns?.length ? breakdowns : breakdown ? [breakdown] : [];
+    if (breakdownList.length) params["breakdowns"] = breakdownList.join(",");
+    if (actionBreakdowns?.length) {
+      params["action_breakdowns"] = actionBreakdowns.join(",");
+    }
+    if (actionReportTime) params["action_report_time"] = actionReportTime;
+    if (actionAttributionWindows?.length) {
+      params["action_attribution_windows"] = actionAttributionWindows.join(",");
+    }
+    if (useAccountAttribution) params["use_account_attribution_setting"] = "true";
+    if (useUnifiedAttribution) params["use_unified_attribution_setting"] = "true";
+    if (filtering?.length) params["filtering"] = JSON.stringify(filtering);
+    if (sort) params["sort"] = sort;
+    if (defaultSummary) params["default_summary"] = "true";
+    if (timeIncrement) params["time_increment"] = String(timeIncrement);
+
+    return params;
+  }
+
+  private parsePixelTime(value?: string): number | undefined {
+    if (!value) return undefined;
+    if (/^\d+$/.test(value)) return Number(value);
+    const ms = Date.parse(`${value}T00:00:00Z`);
+    return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000);
+  }
+
+  private hoursSince(value?: string | number): number | null {
+    if (!value) return null;
+    const timestamp =
+      typeof value === "number" || /^\d+$/.test(String(value))
+        ? Number(value)
+        : Math.floor(Date.parse(String(value).replace("Z", "+00:00")) / 1000);
+    if (!Number.isFinite(timestamp)) return null;
+    return Math.round(((Date.now() / 1000 - timestamp) / 3600) * 10) / 10;
+  }
+
+  private aggregatePixelEvents(rows: Array<Record<string, unknown>>): Record<string, number> {
+    const summary: Record<string, number> = {};
+    for (const row of rows) {
+      const data = row["data"];
+      if (Array.isArray(data)) {
+        for (const item of data) {
+          if (!item || typeof item !== "object") continue;
+          const obj = item as Record<string, unknown>;
+          const event = String(obj["value"] ?? obj["event"] ?? "unknown");
+          const count = Number(obj["count"] ?? 0) || 0;
+          summary[event] = (summary[event] ?? 0) + count;
+        }
+        continue;
+      }
+
+      const event = String(row["aggregation"] ?? row["event"] ?? "unknown");
+      const count = Number(row["count"] ?? row["value"] ?? 0) || 0;
+      summary[event] = (summary[event] ?? 0) + count;
+    }
+    return summary;
+  }
+
   /** Lista as contas de anúncio acessíveis pelo token. */
   async getAdAccounts(): Promise<AdAccount[]> {
     return this.requestPaged<AdAccount>("me/adaccounts", {
@@ -289,41 +503,15 @@ export class MetaAdsClient {
 
   // Busca insights para um único período
   async getInsights(options: InsightsOptions): Promise<Insight[]> {
-    const {
-      level,
-      entityId,
-      since,
-      until,
-      datePreset,
-      breakdown,
-      timeIncrement,
-      limit = 3000,
-    } = options;
-
-    const params: Record<string, string> = {
-      fields: INSIGHTS_FIELDS,
-      level,
-      limit: String(limit),
-    };
-
-    if (datePreset) {
-      params["date_preset"] = datePreset;
-    } else if (since && until) {
-      params["time_range"] = JSON.stringify({ since, until });
-    } else {
-      params["date_preset"] = "last_30d";
-    }
-
-    if (breakdown) params["breakdowns"] = breakdown;
-    if (timeIncrement) params["time_increment"] = String(timeIncrement);
+    const { level, entityId } = options;
+    const params = this.normalizeInsightOptions(options);
 
     const endpoint =
       entityId && level !== "account"
         ? `${entityId}/insights`
         : `${this.resolveAccount(options.accountId)}/insights`;
 
-    const result = await this.request<{ data: Insight[] }>(endpoint, params);
-    return result.data;
+    return this.requestPaged<Insight>(endpoint, params);
   }
 
   // Busca insights comparando dois períodos usando time_ranges (uma só requisição)
@@ -335,7 +523,6 @@ export class MetaAdsClient {
       until,
       compareSince,
       compareUntil,
-      breakdown,
       limit = 3000,
     } = options;
 
@@ -350,31 +537,34 @@ export class MetaAdsClient {
       { since: compareSince, until: compareUntil },
     ];
 
-    const params: Record<string, string> = {
-      fields: INSIGHTS_FIELDS,
-      level,
-      limit: String(limit),
-      time_increment: "1",
-      time_ranges: JSON.stringify(timeRanges),
-    };
-
-    if (breakdown) params["breakdowns"] = breakdown;
+    const params = this.normalizeInsightOptions({
+      ...options,
+      since: undefined,
+      until: undefined,
+      datePreset: undefined,
+      fields: options.fields,
+      limit,
+    });
+    params["time_increment"] = String(options.timeIncrement ?? 1);
+    params["time_ranges"] = JSON.stringify(timeRanges);
+    delete params["date_preset"];
+    delete params["time_range"];
 
     const endpoint =
       entityId && level !== "account"
         ? `${entityId}/insights`
         : `${this.resolveAccount(options.accountId)}/insights`;
 
-    const result = await this.request<{ data: Insight[] }>(endpoint, params);
+    const data = await this.requestPaged<Insight>(endpoint, params);
 
     // A API retorna os dois períodos intercalados; separamos por data
     const mainStart = since;
     const mainEnd = until;
 
-    const period = result.data.filter(
+    const period = data.filter(
       (r) => r.date_start >= mainStart && r.date_stop <= mainEnd
     );
-    const comparison = result.data.filter(
+    const comparison = data.filter(
       (r) => !(r.date_start >= mainStart && r.date_stop <= mainEnd)
     );
 
@@ -388,5 +578,106 @@ export class MetaAdsClient {
       this.resolveAccount(accountId),
       { fields }
     );
+  }
+
+  async listPixels(accountId?: string, fields = PIXEL_FIELDS): Promise<Pixel[]> {
+    return this.requestPaged<Pixel>(`${this.resolveAccount(accountId)}/adspixels`, {
+      fields,
+      limit: "200",
+    });
+  }
+
+  async getPixel(pixelId: string, fields = PIXEL_FIELDS): Promise<Pixel> {
+    return this.request<Pixel>(pixelId, { fields });
+  }
+
+  async getPixelStats(
+    pixelId: string,
+    options: PixelStatsOptions = {}
+  ): Promise<Array<Record<string, unknown>>> {
+    const params: Record<string, string> = {
+      aggregation: options.aggregation ?? "event",
+    };
+    const start = this.parsePixelTime(options.start);
+    const end = this.parsePixelTime(options.end);
+    if (start) params["start_time"] = String(start);
+    if (end) params["end_time"] = String(end);
+    if (options.event) params["event"] = options.event;
+
+    return this.requestPaged<Record<string, unknown>>(`${pixelId}/stats`, params);
+  }
+
+  async getPixelEvents(
+    pixelId: string,
+    options: Pick<PixelStatsOptions, "start" | "end"> = {}
+  ): Promise<PixelEventSummary[]> {
+    const rows = await this.getPixelStats(pixelId, {
+      ...options,
+      aggregation: "event",
+    });
+    const summary = this.aggregatePixelEvents(rows);
+    return Object.entries(summary)
+      .map(([event, count]) => ({ event, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  async getPixelDiagnostics(pixelId: string): Promise<PixelDiagnostics> {
+    const pixel = await this.getPixel(pixelId);
+    const lastFiredHours = this.hoursSince(pixel.last_fired_time);
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - 7 * 24 * 3600;
+
+    let eventsLast7d: Record<string, number> = {};
+    const issues: string[] = [];
+    try {
+      const rows = await this.getPixelStats(pixelId, {
+        aggregation: "event",
+        start: String(start),
+        end: String(end),
+      });
+      eventsLast7d = this.aggregatePixelEvents(rows);
+    } catch (error) {
+      issues.push(
+        `nao foi possivel consultar eventos dos ultimos 7 dias: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    if (pixel.is_unavailable) {
+      issues.push("pixel marcado como indisponivel");
+    }
+    if (!pixel.last_fired_time) {
+      issues.push("pixel nunca disparou evento ou nao retornou last_fired_time");
+    } else if (lastFiredHours != null && lastFiredHours > 24) {
+      issues.push(`ultimo evento ha ${lastFiredHours}h`);
+    }
+    if (!Object.keys(eventsLast7d).length) {
+      issues.push("nenhum evento agregado retornado nos ultimos 7 dias");
+    }
+    if (pixel.enable_automatic_matching === false) {
+      issues.push("automatic matching desabilitado");
+    }
+
+    const health =
+      issues.length === 0 ? "HEALTHY" : issues.length <= 2 ? "DEGRADED" : "UNHEALTHY";
+
+    return {
+      pixel_id: pixel.id,
+      name: pixel.name,
+      health,
+      last_fired_time: pixel.last_fired_time,
+      last_fired_hours_ago: lastFiredHours,
+      is_unavailable: pixel.is_unavailable,
+      can_proxy: pixel.can_proxy,
+      automatic_matching_enabled: pixel.enable_automatic_matching,
+      automatic_matching_fields: pixel.automatic_matching_fields,
+      first_party_cookie_status: pixel.first_party_cookie_status,
+      data_use_setting: pixel.data_use_setting,
+      events_last_7d: Object.fromEntries(
+        Object.entries(eventsLast7d).sort((a, b) => b[1] - a[1])
+      ),
+      issues,
+    };
   }
 }
