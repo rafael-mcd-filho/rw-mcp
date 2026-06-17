@@ -2,7 +2,6 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
 import { buildReport, buildAccountReport, buildPdfModel } from "./report.js";
-import { generatePdf } from "./pdf.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -312,6 +311,14 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       }
 
       const model = buildPdfModel(cliente, `${since} a ${until}`, accountRows, dailyRows);
+      const pdfModulePath = String.fromCharCode(46, 47, 112, 100, 102, 46, 106, 115);
+      const { generatePdf } = (await import(pdfModulePath)) as {
+        generatePdf: (model: ReturnType<typeof buildPdfModel>, clienteSlug: string) => Promise<{
+          pdfPath: string;
+          previewPath: string;
+          pageCount: number;
+        }>;
+      };
       const result = await generatePdf(model, cliente);
 
       return {

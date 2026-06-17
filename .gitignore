@@ -6,3 +6,5 @@ tmp/
 claude_desktop_config.json
 .vercel/
 *.local
+
+.vercel
