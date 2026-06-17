@@ -44,6 +44,11 @@ const json = (data: unknown) => ({
   content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
 });
 
+const toolError = (message: string) => ({
+  content: [{ type: "text" as const, text: message }],
+  isError: true,
+});
+
 const ACCOUNT_ID_SCHEMA = {
   account_id: z.string().optional().describe(ACCOUNT_DESC),
   ad_account_id: z.string().optional().describe("Alias de account_id."),
@@ -360,7 +365,9 @@ Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (lead
 
   server.tool(
     "generate_report_pdf",
-    `Gera um relatório da conta em PDF com layout A4 paginado, prévia PNG, resumo executivo e leitura por objetivo. Retorna os caminhos dos arquivos.
+    process.env.VERCEL
+      ? "PDF ainda nao esta habilitado no deploy remoto. Use somente para receber essa orientacao; relatorios de analise devem usar get_account_report."
+      : `Gera um relatório da conta em PDF com layout A4 paginado, prévia PNG, resumo executivo e leitura por objetivo. Retorna os caminhos dos arquivos.
 Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
@@ -374,10 +381,9 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
     },
     async (args) => {
       if (process.env.VERCEL) {
-        return json({
-          error:
-            "A geracao de PDF ainda nao esta habilitada no Vercel. Use o MCP local para gerar PDF ou configure Chromium serverless antes de usar esta ferramenta em producao.",
-        });
+        return toolError(
+          "A geracao de PDF ainda nao esta habilitada no Vercel. Use get_account_report para relatorio de analise ou configure Chromium serverless antes de usar PDF em producao."
+        );
       }
 
       const { since, until } = periodFrom(args);
