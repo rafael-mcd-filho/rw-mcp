@@ -112,15 +112,21 @@ async function withPage<T>(
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 1 });
+    // 'domcontentloaded' em vez de 'networkidle0': o Browserless mantém a
+    // conexão CDP aberta, então networkidle nunca zera e trava o setContent.
     await page.setContent(renderHtml(data), {
-      waitUntil: "networkidle0",
-      timeout: 45000,
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
     });
-    // Garante que as fontes (Inter) carregaram antes de renderizar o PDF.
-    await page.evaluate(async () => {
-      await (document as unknown as { fonts: { ready: Promise<unknown> } }).fonts
-        .ready;
-    }).catch(() => {});
+    // Espera as fontes (Inter) carregarem, com teto de 4s para não travar.
+    await page
+      .evaluate(async () => {
+        await Promise.race([
+          (document as unknown as { fonts: { ready: Promise<unknown> } }).fonts.ready,
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
+      })
+      .catch(() => {});
     await page
       .waitForFunction("window.__READY__ === true", { timeout: 10000 })
       .catch(() => {});
