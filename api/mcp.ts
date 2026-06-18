@@ -7,6 +7,7 @@ const MCP_INFO = {
   name: "rw-mcp",
   transport: "streamable-http",
   endpoint: "/mcp",
+  commit: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
 };
 
 function acceptsHtml(req: VercelRequest): boolean {
