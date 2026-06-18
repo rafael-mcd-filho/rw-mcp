@@ -13,6 +13,7 @@ import {
   getGoogleAdsAdGroups,
   getGoogleAdsHourlyBreakdown,
   getGoogleAdsKeywordIdeas,
+  getGoogleAdsSearchTerms,
 } from "./google-ads-api.js";
 import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
 
@@ -987,6 +988,22 @@ Passe customer_id (ID da conta, sem traços). Sem período: usa últimos 30 dias
         const idioma = (args as { idioma?: string }).idioma;
         const geo    = (args as { geo?: string }).geo;
         return json(await getGoogleAdsKeywordIdeas(cid, kws as string[], idioma, geo));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_search_terms",
+      "Termos de pesquisa reais que acionaram os anúncios de uma conta Google Ads: mostra exatamente o que os usuários digitaram, com gasto, cliques, impressões, conversões, CTR e CPC por termo. Ideal para encontrar negativar palavras irrelevantes ou adicionar novas keywords com bom desempenho.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsSearchTerms(cid, since, until, datePresetFrom(args)));
       }
     );
   }

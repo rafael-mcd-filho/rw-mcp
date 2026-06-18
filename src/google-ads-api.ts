@@ -691,3 +691,71 @@ export async function getGoogleAdsKeywordIdeas(
     };
   }).sort((a, b) => b.media_buscas_mensais - a.media_buscas_mensais);
 }
+
+// ─── Search Terms ─────────────────────────────────────────────────────────────
+
+export interface GSearchTerm {
+  termo: string;
+  status: string;
+  campanha: string;
+  grupo: string;
+  gasto: number;
+  impressoes: number;
+  cliques: number;
+  conversoes: number;
+  ctr: number;
+  cpc_medio: number;
+}
+
+export async function getGoogleAdsSearchTerms(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GSearchTerm[]> {
+  const where = dateClause(since, until, preset);
+
+  const rows = await gaqlSearch<{
+    searchTermView: { searchTerm: string; status: string };
+    campaign: { name: string };
+    adGroup: { name: string };
+    metrics: {
+      costMicros: string;
+      impressions: string;
+      clicks: string;
+      conversions: string;
+      ctr: string;
+      averageCpc: string;
+    };
+  }>(customerId, `
+    SELECT
+      search_term_view.search_term,
+      search_term_view.status,
+      campaign.name,
+      ad_group.name,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.ctr,
+      metrics.average_cpc
+    FROM search_term_view
+    WHERE ${where}
+      AND campaign.status != 'REMOVED'
+      AND ad_group.status != 'REMOVED'
+    ORDER BY metrics.cost_micros DESC
+  `);
+
+  return rows.map(r => ({
+    termo: r.searchTermView?.searchTerm ?? "",
+    status: r.searchTermView?.status ?? "",
+    campanha: r.campaign?.name ?? "",
+    grupo: r.adGroup?.name ?? "",
+    gasto: micros(r.metrics?.costMicros ?? "0"),
+    impressoes: safeInt(r.metrics?.impressions),
+    cliques: safeInt(r.metrics?.clicks),
+    conversoes: r2(safeFloat(r.metrics?.conversions)),
+    ctr: r2(safeFloat(r.metrics?.ctr) * 100),
+    cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
+  }));
+}
