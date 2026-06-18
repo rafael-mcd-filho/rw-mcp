@@ -3,6 +3,14 @@ import { basename } from "node:path";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
 import { buildReport, buildAccountReport, buildPdfModel, buildDailySeries } from "./report.js";
+import {
+  googleAdsConfigured,
+  listGoogleAdsAccounts,
+  getGoogleAdsAccountReport,
+  getGoogleAdsCampaigns,
+  getGoogleAdsKeywords,
+  getGoogleAdsDailySeries,
+} from "./google-ads-api.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -791,6 +799,103 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       };
     }
   );
+
+  // ─── Google Ads ───────────────────────────────────────────────────────────────
+
+  const GADS_CUSTOMER_SCHEMA = {
+    customer_id: OPTIONAL_SCALAR.describe(
+      "ID da conta Google Ads (somente números, sem traços). Use list_google_ads_accounts para descobrir."
+    ),
+    customerId: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+    conta_id: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+    account_id: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+  };
+
+  function gadsCustomerId(args: {
+    customer_id?: string | number;
+    customerId?: string | number;
+    conta_id?: string | number;
+    account_id?: string | number;
+  }): string | undefined {
+    const raw = args.customer_id ?? args.customerId ?? args.conta_id ?? args.account_id;
+    if (raw == null) return undefined;
+    return String(raw).replace(/-/g, "").trim() || undefined;
+  }
+
+  if (googleAdsConfigured()) {
+    server.tool(
+      "list_google_ads_accounts",
+      "Lista todas as contas Google Ads acessíveis pelo MCC configurado. Use para descobrir os IDs de cada conta antes de buscar relatórios.",
+      { ...COMMON_COMPAT_SCHEMA },
+      async () => json(await listGoogleAdsAccounts())
+    );
+
+    server.tool(
+      "get_google_ads_account_report",
+      `Relatório consolidado de uma conta Google Ads: resumo (gasto, impressões, cliques, conversões, CTR, CPC médio, custo por conversão) e lista de campanhas com métricas individuais.
+Passe customer_id (ID da conta, sem traços). Sem período: usa últimos 30 dias.`,
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsAccountReport(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_campaigns",
+      "Lista campanhas de uma conta Google Ads com métricas (gasto, cliques, conversões, CTR, CPC, custo por conversão, parcela de impressões).",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsCampaigns(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_keywords",
+      "Keywords de uma conta Google Ads ordenadas por gasto, com Quality Score e métricas de performance. Ideal para identificar termos caros, oportunidades de otimização de lance e problemas de qualidade.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        limit: z.number().optional().describe("Máximo de keywords retornadas. Padrão: 50."),
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsKeywords(cid, since, until, datePresetFrom(args), args.limit ?? 50));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_daily_series",
+      "Evolução dia a dia de uma conta Google Ads: gasto, cliques, impressões, conversões e CTR por data. Use para identificar picos, quedas e tendências no período.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsDailySeries(cid, since, until, datePresetFrom(args)));
+      }
+    );
+  }
 
   return server;
 }
