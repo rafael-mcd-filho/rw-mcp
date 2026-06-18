@@ -13,9 +13,16 @@ import { renderPdfHtml } from "./pdf-template.js";
 const isServerless = (): boolean =>
   Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
-/** Caminhos comuns do Chrome/Edge no Windows (Edge existe em todo Win11). */
+/** Caminhos comuns do Chromium/Chrome/Edge no Linux (VPS) e Windows (local). */
 const BROWSER_CANDIDATES = [
   process.env.META_BROWSER_PATH,
+  // Linux (VPS / aaPanel)
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/snap/bin/chromium",
+  // Windows (máquina local)
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   join(homedir(), "AppData\\Local\\Google\\Chrome\\Application\\chrome.exe"),
@@ -32,22 +39,33 @@ function findBrowser(): string {
   );
 }
 
+/**
+ * Endpoint de um Chrome hospedado (Browserless). Aceita a URL completa em
+ * BROWSERLESS_WS_ENDPOINT ou monta a partir de BROWSERLESS_TOKEN.
+ */
+function browserlessEndpoint(): string | undefined {
+  if (process.env.BROWSERLESS_WS_ENDPOINT) return process.env.BROWSERLESS_WS_ENDPOINT;
+  const token = process.env.BROWSERLESS_TOKEN;
+  if (token) return `wss://production-sfo.browserless.io/chromium?token=${token}`;
+  return undefined;
+}
+
 /** Sobe o navegador certo conforme o ambiente. */
 async function launchBrowser(): Promise<Browser> {
+  // Serverless (Vercel): conecta num Chrome hospedado (Browserless), porque o
+  // Chromium nativo do Vercel não tem as libs do sistema (libnss3).
   if (isServerless()) {
-    const chromium = (await import("@sparticuz/chromium")).default;
-    // Usa o binário+libs empacotados (via includeFiles no vercel.json).
-    // CHROMIUM_PACK_URL permite apontar para um pack remoto, se necessário.
-    const executablePath = await chromium.executablePath(
-      process.env.CHROMIUM_PACK_URL || undefined
-    );
-    return puppeteer.launch({
-      args: chromium.args,
-      executablePath,
-      headless: chromium.headless,
-      defaultViewport: { width: 1190, height: 1684, deviceScaleFactor: 1 },
-    });
+    const ws = browserlessEndpoint();
+    if (!ws) {
+      throw new Error(
+        "Geração de PDF na nuvem precisa do Browserless. Defina BROWSERLESS_TOKEN " +
+          "(ou BROWSERLESS_WS_ENDPOINT) nas variáveis do Vercel."
+      );
+    }
+    return puppeteer.connect({ browserWSEndpoint: ws });
   }
+
+  // Local: usa o Chrome/Edge instalado na máquina.
   return puppeteer.launch({
     executablePath: findBrowser(),
     headless: true,

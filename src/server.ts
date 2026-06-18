@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { basename } from "node:path";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
 import { buildReport, buildAccountReport, buildPdfModel, buildDailySeries } from "./report.js";
@@ -762,8 +763,21 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
         };
       }
 
-      // Local: salva em disco + prévia PNG.
+      // Local / VPS: salva em disco + prévia PNG.
       const result = await pdf.generatePdf(model, cliente);
+
+      // Na VPS (PUBLIC_BASE_URL setado), devolve um link servido pelo próprio
+      // servidor (/files) em vez do caminho de disco.
+      const publicBase = process.env.PUBLIC_BASE_URL;
+      if (publicBase) {
+        const fileUrl = `${publicBase.replace(/\/$/, "")}/files/${basename(result.pdfPath)}`;
+        return {
+          content: [
+            { type: "text", text: `PDF gerado (${result.pageCount} páginas):\n${fileUrl}` },
+          ],
+        };
+      }
+
       return {
         content: [
           {
