@@ -1,15 +1,17 @@
-// Renderiza o relatório em HTML paginado e gera PDF + PNG de prévia usando
-// Chrome/Edge instalado no sistema (via puppeteer-core).
+// Renderiza o relatório em HTML paginado e gera o PDF.
+// Funciona em dois ambientes:
+//   - Local: usa o Chrome/Edge instalado e salva PDF + PNG no disco.
+//   - Serverless (Vercel): usa @sparticuz/chromium e retorna o PDF em Buffer.
 
-import { existsSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import puppeteer from "puppeteer-core";
+import { join } from "node:path";
+import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import type { PdfReportModel } from "./report.js";
 import { renderPdfHtml } from "./pdf-template.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
+const isServerless = (): boolean =>
+  Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 
 /** Caminhos comuns do Chrome/Edge no Windows (Edge existe em todo Win11). */
 const BROWSER_CANDIDATES = [
@@ -30,8 +32,22 @@ function findBrowser(): string {
   );
 }
 
-function templatePath(): string {
-  return process.env.META_REPORT_TEMPLATE ?? "";
+/** Sobe o navegador certo conforme o ambiente. */
+async function launchBrowser(): Promise<Browser> {
+  if (isServerless()) {
+    const chromium = (await import("@sparticuz/chromium")).default;
+    return puppeteer.launch({
+      args: chromium.args,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+      defaultViewport: { width: 1190, height: 1684, deviceScaleFactor: 1 },
+    });
+  }
+  return puppeteer.launch({
+    executablePath: findBrowser(),
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
 }
 
 function outputDir(): string {
@@ -52,93 +68,98 @@ function slugify(text: string): string {
     .slice(0, 60);
 }
 
+function renderHtml(data: PdfReportModel): string {
+  const custom = process.env.META_REPORT_TEMPLATE;
+  if (custom) {
+    const template = readFileSync(custom, "utf-8");
+    return template.replace(
+      "</head>",
+      `<script>window.__DATA__ = ${JSON.stringify(data)};</script></head>`
+    );
+  }
+  return renderPdfHtml(data);
+}
+
+/** Abre a página, valida estouro de A4 e entrega ao callback. */
+async function withPage<T>(
+  data: PdfReportModel,
+  fn: (page: Page, pageCount: number) => Promise<T>
+): Promise<T> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 1 });
+    await page.setContent(renderHtml(data), {
+      waitUntil: "networkidle0",
+      timeout: 45000,
+    });
+    // Garante que as fontes (Inter) carregaram antes de renderizar o PDF.
+    await page.evaluate(async () => {
+      await (document as unknown as { fonts: { ready: Promise<unknown> } }).fonts
+        .ready;
+    }).catch(() => {});
+    await page
+      .waitForFunction("window.__READY__ === true", { timeout: 10000 })
+      .catch(() => {});
+
+    const metrics = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(".page")].map((el, i) => ({
+        page: i + 1,
+        overflow: el.scrollHeight - el.clientHeight > 2,
+      }))
+    );
+    const overflow = metrics.filter((m) => m.overflow);
+    if (overflow.length) {
+      throw new Error(
+        `Conteúdo excedeu a folha A4 nas páginas: ${overflow
+          .map((m) => m.page)
+          .join(", ")}`
+      );
+    }
+
+    return await fn(page, metrics.length || 1);
+  } finally {
+    await browser.close();
+  }
+}
+
+const PDF_OPTS = {
+  format: "A4" as const,
+  printBackground: true,
+  preferCSSPageSize: true,
+  margin: { top: "0", bottom: "0", left: "0", right: "0" },
+};
+
+/** Gera o PDF em memória (Buffer) — usado no serverless / envio por WhatsApp. */
+export async function renderReportPdf(
+  data: PdfReportModel
+): Promise<{ pdf: Buffer; pageCount: number }> {
+  return withPage(data, async (page, pageCount) => {
+    const pdf = Buffer.from(await page.pdf(PDF_OPTS));
+    return { pdf, pageCount };
+  });
+}
+
 export interface GeneratedPdf {
   pdfPath: string;
   previewPath: string;
   pageCount: number;
 }
 
-function renderHtml(data: PdfReportModel): string {
-  const customTemplate = templatePath();
-  if (!customTemplate) return renderPdfHtml(data);
-
-  const template = readFileSync(customTemplate, "utf-8");
-  return template.replace(
-    "</head>",
-    `<script>window.__DATA__ = ${JSON.stringify(data)};</script></head>`
-  );
-}
-
-/** Gera o PDF e retorna os caminhos dos arquivos salvos. */
+/** Gera o PDF + PNG de prévia salvos em disco — usado localmente. */
 export async function generatePdf(
   data: PdfReportModel,
   clienteSlug: string
 ): Promise<GeneratedPdf> {
   const stamp = new Date().toISOString().slice(0, 10);
-  const baseName = `relatorio-${slugify(clienteSlug)}-${stamp}`;
-  const pdfPath = join(
-    outputDir(),
-    `${baseName}.pdf`
-  );
-  const previewPath = join(
-    outputDir(),
-    `${baseName}-preview.png`
-  );
-  const html = renderHtml(data);
+  const base = `relatorio-${slugify(clienteSlug)}-${stamp}`;
+  const dir = outputDir();
+  const pdfPath = join(dir, `${base}.pdf`);
+  const previewPath = join(dir, `${base}-preview.png`);
 
-  const browser = await puppeteer.launch({
-    executablePath: findBrowser(),
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-
-  try {
-    const page = await browser.newPage();
-    await page.setViewport({
-      width: 1190,
-      height: 1684,
-      deviceScaleFactor: 1,
-    });
-    await page.setContent(html, { waitUntil: "networkidle0", timeout: 30000 });
-    // Espera o template sinalizar que terminou.
-    await page
-      .waitForFunction("window.__READY__ === true", { timeout: 10000 })
-      .catch(() => {
-        /* Mantem compatibilidade com templates customizados antigos. */
-      });
-
-    const pageMetrics = await page.evaluate(() =>
-      [...document.querySelectorAll<HTMLElement>(".page")].map((element, index) => ({
-        page: index + 1,
-        scrollHeight: element.scrollHeight,
-        clientHeight: element.clientHeight,
-        overflow: element.scrollHeight - element.clientHeight > 2,
-      }))
-    );
-    const overflowPages = pageMetrics.filter((metric) => metric.overflow);
-    if (overflowPages.length) {
-      throw new Error(
-        `Conteúdo excedeu a folha A4 nas páginas: ${overflowPages
-          .map((metric) => metric.page)
-          .join(", ")}`
-      );
-    }
-
-    await page.pdf({
-      path: pdfPath,
-      format: "A4",
-      printBackground: true,
-      preferCSSPageSize: true,
-      margin: { top: "0", bottom: "0", left: "0", right: "0" },
-    });
+  return withPage(data, async (page, pageCount) => {
+    await page.pdf({ ...PDF_OPTS, path: pdfPath });
     await page.screenshot({ path: previewPath, fullPage: true });
-
-    return {
-      pdfPath,
-      previewPath,
-      pageCount: pageMetrics.length || 1,
-    };
-  } finally {
-    await browser.close();
-  }
+    return { pdfPath, previewPath, pageCount };
+  });
 }

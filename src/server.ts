@@ -700,9 +700,8 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
   server.tool(
     "generate_report_pdf",
-    process.env.VERCEL
-      ? "PDF ainda nao esta habilitado no deploy remoto. Use somente para receber essa orientacao; relatorios de analise devem usar get_account_report."
-      : `Gera um relatório da conta em PDF com layout A4 paginado, prévia PNG, resumo executivo e leitura por objetivo. Retorna os caminhos dos arquivos.
+    `Gera um relatório da conta em PDF com layout A4 paginado, resumo executivo e leitura por objetivo.
+Local: salva o PDF + prévia PNG em disco. No Vercel: gera em memória e devolve uma URL de download (Vercel Blob).
 Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
@@ -712,19 +711,12 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       ...ACCOUNT_ID_SCHEMA,
     },
     async (args) => {
-      if (process.env.VERCEL) {
-        return toolError(
-          "A geracao de PDF ainda nao esta habilitada no Vercel. Use get_account_report para relatorio de analise ou configure Chromium serverless antes de usar PDF em producao."
-        );
-      }
-
       const { since, until } = periodFrom(args);
       const periodSince = requireValue(since, "since");
       const periodUntil = requireValue(until, "until");
       const account_id = accountIdFrom(args);
       const client_name = clientNameFrom(args);
 
-      // 1) Totais por campanha (tabela) e 2) série diária (gráfico)
       const [accountRows, dailyRows] = await Promise.all([
         client.getInsights({ level: "campaign", since: periodSince, until: periodUntil, accountId: account_id }),
         client.getInsights({
@@ -739,16 +731,39 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       }
 
       const model = buildPdfModel(cliente, `${periodSince} a ${periodUntil}`, accountRows, dailyRows);
-      const pdfModulePath = String.fromCharCode(46, 47, 112, 100, 102, 46, 106, 115);
-      const { generatePdf } = (await import(pdfModulePath)) as {
-        generatePdf: (model: ReturnType<typeof buildPdfModel>, clienteSlug: string) => Promise<{
-          pdfPath: string;
-          previewPath: string;
-          pageCount: number;
-        }>;
-      };
-      const result = await generatePdf(model, cliente);
+      const pdf = await import("./pdf.js");
+      const slug = cliente
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+        .toLowerCase().slice(0, 60);
 
+      // Serverless (Vercel): gera em memória e entrega por URL (Vercel Blob).
+      if (process.env.VERCEL) {
+        const { pdf: buffer, pageCount } = await pdf.renderReportPdf(model);
+        const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+        if (!blobToken) {
+          return toolError(
+            `PDF renderizado (${pageCount} páginas, ${Math.round(buffer.length / 1024)} KB), ` +
+              "mas falta armazenamento. Crie um Vercel Blob Store e defina BLOB_READ_WRITE_TOKEN para receber o link."
+          );
+        }
+        const { put } = await import("@vercel/blob");
+        const stamp = new Date().toISOString().slice(0, 10);
+        const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
+          access: "public",
+          token: blobToken,
+          contentType: "application/pdf",
+          addRandomSuffix: true,
+        });
+        return {
+          content: [
+            { type: "text", text: `PDF gerado (${pageCount} páginas):\n${result.url}` },
+          ],
+        };
+      }
+
+      // Local: salva em disco + prévia PNG.
+      const result = await pdf.generatePdf(model, cliente);
       return {
         content: [
           {

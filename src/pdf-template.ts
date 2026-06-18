@@ -350,6 +350,9 @@ export function renderPdfHtml(model: PdfReportModel): string {
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(model.cliente)} - relatório</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&display=swap" rel="stylesheet" />
   <style>${BASE_REPORT_CSS}</style>
 </head>
 <body>
