@@ -718,28 +718,78 @@ function buildExecutiveRead(
   return linhas;
 }
 
-function buildNextSteps(objetivos: PdfObjectiveSummary[]): string[] {
-  const principal = objetivos[0];
-  const passos = [
-    "Revisar as campanhas de maior gasto para preservar verba nos conjuntos com melhor custo por resultado.",
-    "Separar leitura de aquisicao e presenca para evitar comparar objetivos com metricas diferentes.",
-    "Manter a fonte dos dados declarada no rodape quando houver CRM, planilha ou print complementar.",
-  ];
-
-  if (principal?.category === "awareness") {
-    passos[0] =
-      "Acompanhar frequencia, CPM e alcance antes de aumentar investimento em reconhecimento.";
-  }
-  if (principal?.category === "messages") {
-    passos[0] =
-      "Cruzar conversas iniciadas com atendimento real antes de tratar conversa como venda.";
-  }
-  if (principal?.category === "lead_form") {
-    passos[0] =
-      "Cruzar leads de plataforma com CRM para separar volume gerado de lead qualificado.";
+/**
+ * Próximos passos gerados a partir dos dados reais das campanhas:
+ * campanha sem resultado, custo por resultado fora da curva, frequência alta
+ * (fadiga de público) e destaque para escalar. Sem texto genérico.
+ */
+function buildNextSteps(
+  campanhas: ReturnType<typeof buildAccountReport>["campanhas"]
+): string[] {
+  const ativas = campanhas.filter((c) => c.gasto > 0);
+  if (!ativas.length) {
+    return ["Sem entrega suficiente no período para recomendações."];
   }
 
-  return passos;
+  const passos: string[] = [];
+  const totalGasto = ativas.reduce((s, c) => s + c.gasto, 0);
+  const jaCitada = (nome: string) => passos.some((p) => p.includes(nome));
+
+  // 1) Campanha com gasto relevante e zero resultado
+  for (const c of ativas) {
+    if (c.resultado === 0 && c.gasto >= Math.max(20, totalGasto * 0.03)) {
+      passos.push(
+        `Avaliar pausar ${c.nome}: ${moneyBR(c.gasto)} gastos sem resultado no período.`
+      );
+    }
+  }
+
+  // 2) Custo por resultado fora da curva (entre campanhas de conversão)
+  const comResultado = ativas.filter(
+    (c) => CONVERSION_CATEGORIES.has(c.categoria) && c.resultado > 0 && c.custo > 0
+  );
+  if (comResultado.length >= 2) {
+    const melhor = Math.min(...comResultado.map((c) => c.custo));
+    for (const c of comResultado) {
+      if (c.custo >= melhor * 2.5 && c.custo >= 10 && !jaCitada(c.nome)) {
+        passos.push(
+          `Revisar ${c.nome}: ${c.costLabel.toLowerCase()} de ${moneyBR(
+            c.custo
+          )}, bem acima das demais (melhor está em ${moneyBR(melhor)}).`
+        );
+      }
+    }
+  }
+
+  // 3) Frequência alta = desgaste de público
+  for (const c of ativas) {
+    if (c.frequencia >= 2.5 && c.gasto >= totalGasto * 0.1 && !jaCitada(c.nome)) {
+      passos.push(
+        `Renovar criativo/público em ${c.nome}: frequência ${c.frequencia.toFixed(
+          2
+        )} indica desgaste do público.`
+      );
+    }
+  }
+
+  // 4) Destaque positivo para escalar (melhor custo com volume)
+  if (comResultado.length) {
+    const melhorCamp = [...comResultado].sort((a, b) => a.custo - b.custo)[0];
+    if (!jaCitada(melhorCamp.nome)) {
+      passos.push(
+        `Manter foco em ${melhorCamp.nome}: melhor custo por resultado (${moneyBR(
+          melhorCamp.custo
+        )}) e candidata a mais verba.`
+      );
+    }
+  }
+
+  if (!passos.length) {
+    passos.push(
+      "Concentrar verba nos conjuntos de melhor custo por resultado e acompanhar a evolução diária."
+    );
+  }
+  return passos.slice(0, 4);
 }
 
 /**
@@ -890,10 +940,10 @@ export function buildPdfModel(
     campanhas: account.campanhas,
     serieDiaria,
     notasMetodologicas: [
-      "Resultados sao lidos conforme o objetivo detectado de cada campanha.",
-      "Alcance somado por campanha pode conter usuarios repetidos entre campanhas.",
-      "Conversas, leads e visitas representam eventos de plataforma; qualificacao comercial depende de CRM ou atendimento.",
+      "Resultados são lidos conforme o objetivo de cada campanha (leads, conversas, visitas ou alcance).",
+      "Visitas ao perfil são uma estimativa pelos cliques no link — a Meta não devolve o número exato pela API.",
+      "Alcance somado por campanha pode contar a mesma pessoa em campanhas diferentes.",
     ],
-    proximosPassos: buildNextSteps(objetivos),
+    proximosPassos: buildNextSteps(account.campanhas),
   };
 }
