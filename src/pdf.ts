@@ -32,13 +32,19 @@ function findBrowser(): string {
   );
 }
 
+// Pack remoto do Chromium (binário + libs como libnss3) baixado em runtime.
+// Evita os problemas de bundling/libs do Vercel. Pode ser sobrescrito por env.
+const CHROMIUM_PACK_URL =
+  process.env.CHROMIUM_PACK_URL ??
+  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar";
+
 /** Sobe o navegador certo conforme o ambiente. */
 async function launchBrowser(): Promise<Browser> {
   if (isServerless()) {
-    const chromium = (await import("@sparticuz/chromium")).default;
+    const chromium = (await import("@sparticuz/chromium-min")).default;
     return puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.executablePath(CHROMIUM_PACK_URL),
       headless: chromium.headless,
       defaultViewport: { width: 1190, height: 1684, deviceScaleFactor: 1 },
     });
