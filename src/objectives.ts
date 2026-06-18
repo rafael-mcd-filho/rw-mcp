@@ -56,7 +56,7 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
   lead_form: {
     category: "lead_form",
     emoji: "📋",
-    title: "Leads por Formulário",
+    title: "Leads",
     headlineLabel: "Leads",
     costLabel: "CPL (custo por lead)",
     actionPriority: [
