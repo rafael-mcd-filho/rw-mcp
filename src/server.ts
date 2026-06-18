@@ -11,6 +11,7 @@ import {
   getGoogleAdsKeywords,
   getGoogleAdsDailySeries,
 } from "./google-ads-api.js";
+import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -799,6 +800,42 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       };
     }
   );
+
+  // ─── Base de clientes (webhook n8n) ─────────────────────────────────────────
+
+  const CLIENT_NAME_LOOKUP_SCHEMA = {
+    nome_cliente: z.string().optional().describe("Nome do cliente para buscar na base (match parcial, ignora acentos). Quando informado, os IDs de conta Meta e Google são resolvidos automaticamente."),
+    nomeCliente: z.string().optional().describe("Alias de nome_cliente."),
+    cliente: z.string().optional().describe("Alias de nome_cliente."),
+    client: z.string().optional().describe("Alias de nome_cliente."),
+  };
+
+  function clientNameLookup(args: Record<string, unknown>): string | undefined {
+    return (
+      (args.nome_cliente ?? args.nomeCliente ?? args.cliente ?? args.client) as string | undefined
+    );
+  }
+
+  if (clientsConfigured()) {
+    server.tool(
+      "get_client_info",
+      "Busca as informações de um cliente na base da Plugue: ID da conta Meta Ads, ID da conta Google Ads e JID do grupo WhatsApp. Use antes de pedir relatórios para resolver os IDs automaticamente pelo nome.",
+      {
+        ...CLIENT_NAME_LOOKUP_SCHEMA,
+        listar_todos: z.boolean().optional().describe("Se true, retorna todos os clientes cadastrados."),
+      },
+      async (args) => {
+        if (args.listar_todos) {
+          return json(await loadClients());
+        }
+        const nome = clientNameLookup(args as Record<string, unknown>);
+        if (!nome) return toolError("Informe nome_cliente ou use listar_todos=true.");
+        const client = await findClient(nome);
+        if (!client) return toolError(`Cliente "${nome}" não encontrado na base. Use listar_todos=true para ver todos.`);
+        return json(client);
+      }
+    );
+  }
 
   // ─── Google Ads ───────────────────────────────────────────────────────────────
 
