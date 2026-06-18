@@ -39,8 +39,8 @@ type ObjectiveRow = PdfReportModel["objetivos"][number];
 function logoDataUri(): string | null {
   const candidates = [
     process.env.META_REPORT_LOGO,
-    join(here, "..", "..", "assets", "logo-lima-soares-vermelho.png"),
-    join(here, "..", "assets", "logo-lima-soares-vermelho.png"),
+    join(here, "..", "..", "assets", "logo-plugue.png"),
+    join(here, "..", "assets", "logo-plugue.png"),
   ].filter(Boolean) as string[];
 
   const path = candidates.find((candidate) => existsSync(candidate));
@@ -53,7 +53,7 @@ function logoDataUri(): string | null {
 function renderHeader(model: PdfReportModel, logo: string | null): string {
   const logoMarkup = logo
     ? `<img src="${logo}" alt="Logo" />`
-    : `<div class="brand-fallback">LS</div>`;
+    : `<div class="brand-fallback">Plugue</div>`;
 
   return `<header>
     <div class="brand">

@@ -743,6 +743,48 @@ function buildNextSteps(objetivos: PdfObjectiveSummary[]): string[] {
 }
 
 /**
+ * Série diária consolidada (todas as campanhas somadas por dia) com as métricas
+ * principais. Recebe linhas ao nível de campanha com time_increment=1.
+ * Usada na análise de período para o modelo enxergar a evolução dia a dia.
+ */
+export function buildDailySeries(dailyRows: Insight[]) {
+  const byDay: Record<
+    string,
+    { gasto: number; resultados: number; cliques: number; impressoes: number }
+  > = {};
+
+  for (const r of dailyRows) {
+    const day = r.date_start;
+    if (!day) continue;
+    const config = detectCategory(r.campaign_name ?? "", r.objective);
+    const agg = aggregate([r], config);
+    if (!byDay[day]) byDay[day] = { gasto: 0, resultados: 0, cliques: 0, impressoes: 0 };
+    byDay[day].gasto += agg.totalSpend;
+    byDay[day].cliques += agg.totalClicks;
+    byDay[day].impressoes += agg.totalImpressions;
+    if (CONVERSION_CATEGORIES.has(config.category)) {
+      byDay[day].resultados += agg.totalConversoes;
+    }
+  }
+
+  return Object.keys(byDay)
+    .sort()
+    .map((day) => {
+      const d = byDay[day];
+      const ctr = d.impressoes > 0 ? (d.cliques / d.impressoes) * 100 : 0;
+      const custoPorResultado = d.resultados > 0 ? d.gasto / d.resultados : 0;
+      return {
+        data: dateBR(day),
+        gasto: round2(d.gasto),
+        resultados: d.resultados,
+        cliques: d.cliques,
+        ctr: round2(ctr),
+        custo_por_resultado: round2(custoPorResultado),
+      };
+    });
+}
+
+/**
  * Monta o objeto consumido pelo template HTML do PDF: cabeçalho, cards de
  * resumo, tabela de campanhas e a série diária (gasto + resultados por dia).
  *

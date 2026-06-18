@@ -153,7 +153,7 @@ body {
   position: absolute;
   inset: 0 0 auto 0;
   height: 6mm;
-  background: linear-gradient(90deg, #ff2b32 0%, #ff2b32 44%, #101216 44%, #101216 100%);
+  background: linear-gradient(90deg, #1A53F0 0%, #1A53F0 44%, #0B2A6B 44%, #0B2A6B 100%);
 }
 header {
   display: flex;
@@ -170,11 +170,11 @@ header {
   display: grid;
   place-items: center;
   border: 1px solid #e5e7eb;
-  color: #ff2b32;
+  color: #1A53F0;
   font-size: 15px;
   font-weight: 850;
 }
-.brand-text strong { display: block; font-size: 13px; text-transform: uppercase; color: #ff2b32; }
+.brand-text strong { display: block; font-size: 13px; text-transform: uppercase; color: #1A53F0; }
 .brand-text span { display: block; margin-top: 2px; font-size: 11px; color: #5f6673; }
 .period { font-size: 11px; color: #5f6673; text-align: right; line-height: 1.35; }
 .period strong { color: #101216; }
@@ -186,15 +186,15 @@ p { margin: 0; font-size: 12px; line-height: 1.45; color: #3b414c; }
 .hero { margin-top: 4px; padding: 17px 0 15px; border-bottom: 1px solid #e6e8ed; }
 .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0 13px; }
 .kpi { min-height: 92px; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fbfcfe; }
-.kpi.red { border-top: 4px solid #ff2b32; }
-.kpi.black { border-top: 4px solid #101216; }
+.kpi.red { border-top: 4px solid #1A53F0; }
+.kpi.black { border-top: 4px solid #0B2A6B; }
 .kpi span { display: block; font-size: 10px; color: #667085; text-transform: uppercase; font-weight: 750; }
 .kpi strong { display: block; margin-top: 9px; font-size: 22px; line-height: 1; color: #101216; white-space: nowrap; }
 .kpi small { display: block; margin-top: 8px; font-size: 10px; line-height: 1.3; color: #6b7280; }
 .section { margin-top: 16px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin-top: 11px; }
 .panel { border: 1px solid #e5e7eb; border-radius: 8px; padding: 13px; background: #fff; }
-.panel.dark { background: #101216; color: #fff; border: 0; }
+.panel.dark { background: #0B2A6B; color: #fff; border: 0; }
 .panel.dark h2, .panel.dark h3, .panel.dark p { color: #fff; }
 .panel.dark p { opacity: 0.86; }
 .table { width: 100%; border-collapse: collapse; margin-top: 9px; font-size: 10.3px; }
@@ -211,18 +211,18 @@ p { margin: 0; font-size: 12px; line-height: 1.45; color: #3b414c; }
 .bar-label span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-label strong { white-space: nowrap; color: #101216; }
 .bar-track { height: 8px; background: #eceff3; border-radius: 999px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #ff2b32, #111827); }
-.bar-fill.negative { background: #ff2b32; }
+.bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #1A53F0, #0B2A6B); }
+.bar-fill.negative { background: #1A53F0; }
 .bar-row small { color: #69707d; font-size: 9px; }
 .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 11px; }
 .metric { padding: 9px; border-radius: 8px; background: #f7f8fa; border: 1px solid #e7eaf0; min-height: 61px; }
 .metric span { display: block; font-size: 9px; color: #69707d; text-transform: uppercase; font-weight: 750; }
 .metric strong { display: block; margin-top: 6px; font-size: 14px; color: #111827; white-space: nowrap; }
-.metric.red strong { color: #e41f2b; }
-.note { margin-top: 9px; padding: 9px 11px; border-left: 3px solid #ff2b32; background: #fff7f7; color: #3b414c; font-size: 10.6px; line-height: 1.4; }
+.metric.red strong { color: #1440C9; }
+.note { margin-top: 9px; padding: 9px 11px; border-left: 3px solid #1A53F0; background: #eef3ff; color: #3b414c; font-size: 10.6px; line-height: 1.4; }
 .insight-list { display: grid; gap: 8px; margin-top: 9px; }
 .insight { display: grid; grid-template-columns: 18px 1fr; gap: 7px; font-size: 11px; line-height: 1.34; color: #3b414c; }
-.dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #ff2b32; }
+.dot { width: 8px; height: 8px; margin-top: 4px; border-radius: 50%; background: #1A53F0; }
 .footer {
   position: absolute;
   left: 16mm;

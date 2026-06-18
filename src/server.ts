@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
-import { buildReport, buildAccountReport, buildPdfModel } from "./report.js";
+import { buildReport, buildAccountReport, buildPdfModel, buildDailySeries } from "./report.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -128,6 +128,17 @@ const DATE_PRESET_SCHEMA = {
   preset: z.string().optional().describe("Alias de date_preset."),
   period: z.string().optional().describe("Alias de date_preset quando usar presets como this_month."),
   periodo: z.string().optional().describe("Alias de date_preset quando usar presets como this_month."),
+};
+
+const DAILY_SCHEMA = {
+  incluir_diario: z.boolean().optional().describe(
+    "Inclui a evolução dia a dia (gasto, resultados, cliques, CTR e custo por resultado de cada dia) além dos totais. Use quando o usuário pedir análise diária."
+  ),
+  daily: z.boolean().optional().describe("Alias de incluir_diario."),
+  diario: z.boolean().optional().describe("Alias de incluir_diario."),
+  incluir_serie_diaria: z.boolean().optional().describe("Alias de incluir_diario."),
+  serie_diaria: z.boolean().optional().describe("Alias de incluir_diario."),
+  breakdown_diario: z.boolean().optional().describe("Alias de incluir_diario."),
 };
 
 const CLIENT_NAME_SCHEMA = {
@@ -479,6 +490,8 @@ export function createMcpServer(
       CAMPAIGN_ID: OPTIONAL_SCALAR.describe("Alias de entity_id quando level=campaign."),
       ...OPTIONAL_PERIOD_SCHEMA,
       ...DATE_PRESET_SCHEMA,
+      time_increment: z.union([z.number(), z.string()]).optional().describe("Quebra temporal: 1 = uma linha por dia (série diária). Omita para o total do período."),
+      timeIncrement: z.union([z.number(), z.string()]).optional().describe("Alias de time_increment."),
       breakdown: z.enum(BREAKDOWNS).optional().describe("Quebra única. 'placement' vira publisher_platform + platform_position."),
       breakdowns: z.array(z.enum(BREAKDOWNS)).optional().describe("Quebras múltiplas."),
       action_breakdowns: z.array(z.enum(ACTION_BREAKDOWNS)).optional(),
@@ -510,11 +523,16 @@ export function createMcpServer(
           args.CAMPAIGN_ID
       );
 
+      const tiRaw = args.time_increment ?? args.timeIncrement;
+      const timeIncrement =
+        tiRaw != null && Number(tiRaw) > 0 ? Number(tiRaw) : undefined;
+
       return json(await client.getInsights({
         level: args.level,
         entityId,
         since,
         until,
+        timeIncrement,
         datePreset: datePresetFrom(args),
         breakdown: args.breakdown === "placement" ? undefined : args.breakdown,
         breakdowns:
@@ -642,22 +660,39 @@ Passe compare_since/compare_until para comparar dois períodos com variação %.
   server.tool(
     "get_account_report",
     `Relatório consolidado de TODAS as campanhas que rodaram no período, numa só chamada.
-Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (leads, conversas, visitas, alcance...), com totais e custo por resultado. Ideal para "como foi a conta ontem / essa semana".`,
+Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (leads, conversas, visitas, alcance...), com totais e custo por resultado. Ideal para "como foi a conta ontem / essa semana".
+Passe incluir_diario=true para receber também a evolução dia a dia (gasto, resultados, cliques, CTR e custo por resultado de cada dia).`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
       ...DATE_PRESET_SCHEMA,
+      ...DAILY_SCHEMA,
       ...CLIENT_NAME_SCHEMA,
       ...COMMON_COMPAT_SCHEMA,
       ...ACCOUNT_ID_SCHEMA,
     },
     async (args) => {
       const { since, until } = periodFrom(args);
+      const datePreset = datePresetFrom(args);
+      const accountId = accountIdFrom(args);
       const rows = await client.getInsights({
-        level: "campaign", since, until, datePreset: datePresetFrom(args), accountId: accountIdFrom(args),
+        level: "campaign", since, until, datePreset, accountId,
       });
       const periodoLabel =
-        since && until ? `${since} → ${until}` : datePresetFrom(args) ?? "últimos 30 dias";
-      return json(buildAccountReport(rows, periodoLabel));
+        since && until ? `${since} → ${until}` : datePreset ?? "últimos 30 dias";
+      const report = buildAccountReport(rows, periodoLabel);
+
+      const wantsDaily =
+        args.incluir_diario ?? args.daily ?? args.diario ??
+        args.incluir_serie_diaria ?? args.serie_diaria ?? args.breakdown_diario;
+
+      if (wantsDaily) {
+        const dailyRows = await client.getInsights({
+          level: "campaign", since, until, datePreset, timeIncrement: 1, accountId,
+        });
+        return json({ ...report, serie_diaria: buildDailySeries(dailyRows) });
+      }
+
+      return json(report);
     }
   );
 
