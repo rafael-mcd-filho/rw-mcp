@@ -10,6 +10,9 @@ import {
   getGoogleAdsCampaigns,
   getGoogleAdsKeywords,
   getGoogleAdsDailySeries,
+  getGoogleAdsAdGroups,
+  getGoogleAdsHourlyBreakdown,
+  getGoogleAdsKeywordIdeas,
 } from "./google-ads-api.js";
 import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
 
@@ -930,6 +933,60 @@ Passe customer_id (ID da conta, sem traços). Sem período: usa últimos 30 dias
         const { since, until } = periodFrom(args);
         const cid = requireValue(gadsCustomerId(args), "customer_id");
         return json(await getGoogleAdsDailySeries(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_ad_groups",
+      "Métricas por grupo de anúncios (ad group) de uma conta Google Ads: gasto, cliques, impressões, conversões, CTR, CPC médio e CPA. Útil para analisar quais grupos performam melhor dentro de cada campanha.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsAdGroups(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_hourly_breakdown",
+      "Performance por hora do dia (0-23) de uma conta Google Ads: gasto, cliques, impressões, conversões e CTR agregados por hora. Útil para identificar os melhores horários para anunciar e otimizar o agendamento de anúncios.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        return json(await getGoogleAdsHourlyBreakdown(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_keyword_ideas",
+      "Keyword Planner do Google Ads: sugere palavras-chave relevantes com volume médio de buscas mensais, nível de competição, índice de competição e lance estimado de topo de página. Ideal para pesquisa de palavras-chave e planejamento de novas campanhas.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        keywords: z.array(z.string()).describe("Lista de palavras-chave ou temas para pesquisar ideias (ex: ['rastreamento veicular', 'rastreador gps'])"),
+        idioma: z.string().optional().describe("Código do idioma (padrão: 'languageConstants/1014' = Português). Outros: 'languageConstants/1000' = Inglês."),
+        geo: z.string().optional().describe("Código geográfico (padrão: 'geoTargetConstants/2076' = Brasil)."),
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const kws = (args as { keywords?: unknown }).keywords;
+        if (!Array.isArray(kws) || kws.length === 0) {
+          return { content: [{ type: "text" as const, text: "Parâmetro obrigatório: keywords (array de strings não vazio)." }] };
+        }
+        const idioma = (args as { idioma?: string }).idioma;
+        const geo    = (args as { geo?: string }).geo;
+        return json(await getGoogleAdsKeywordIdeas(cid, kws as string[], idioma, geo));
       }
     );
   }

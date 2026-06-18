@@ -463,3 +463,231 @@ export async function getGoogleAdsDailySeries(
     };
   });
 }
+
+// ─── Ad Groups ───────────────────────────────────────────────────────────────
+
+export interface GAdGroup {
+  id: string;
+  nome: string;
+  status: string;
+  campanha: string;
+  gasto: number;
+  impressoes: number;
+  cliques: number;
+  conversoes: number;
+  ctr: number;
+  cpc_medio: number;
+  custo_por_conversao: number;
+}
+
+export async function getGoogleAdsAdGroups(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GAdGroup[]> {
+  const where = dateClause(since, until, preset);
+
+  const rows = await gaqlSearch<{
+    adGroup: { id: string; name: string; status: string };
+    campaign: { name: string };
+    metrics: {
+      costMicros: string;
+      impressions: string;
+      clicks: string;
+      conversions: string;
+      ctr: string;
+      averageCpc: string;
+      costPerConversion: string;
+    };
+  }>(customerId, `
+    SELECT
+      ad_group.id,
+      ad_group.name,
+      ad_group.status,
+      campaign.name,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.cost_per_conversion
+    FROM ad_group
+    WHERE ${where}
+      AND campaign.status != 'REMOVED'
+      AND ad_group.status != 'REMOVED'
+    ORDER BY metrics.cost_micros DESC
+  `);
+
+  return rows.map(r => ({
+    id: r.adGroup?.id ?? "",
+    nome: r.adGroup?.name ?? "",
+    status: r.adGroup?.status ?? "",
+    campanha: r.campaign?.name ?? "",
+    gasto: micros(r.metrics?.costMicros ?? "0"),
+    impressoes: safeInt(r.metrics?.impressions),
+    cliques: safeInt(r.metrics?.clicks),
+    conversoes: r2(safeFloat(r.metrics?.conversions)),
+    ctr: r2(safeFloat(r.metrics?.ctr) * 100),
+    cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
+    custo_por_conversao: micros(r.metrics?.costPerConversion ?? "0"),
+  }));
+}
+
+// ─── Hourly Breakdown ────────────────────────────────────────────────────────
+
+export interface GHourData {
+  hora: number;
+  gasto: number;
+  cliques: number;
+  impressoes: number;
+  conversoes: number;
+  ctr: number;
+}
+
+export async function getGoogleAdsHourlyBreakdown(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GHourData[]> {
+  const where = dateClause(since, until, preset);
+
+  const rows = await gaqlSearch<{
+    segments: { hour: number };
+    metrics: {
+      costMicros: string;
+      impressions: string;
+      clicks: string;
+      conversions: string;
+      ctr: string;
+    };
+  }>(customerId, `
+    SELECT
+      segments.hour,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.ctr
+    FROM campaign
+    WHERE ${where}
+      AND campaign.status != 'REMOVED'
+    ORDER BY segments.hour ASC
+  `);
+
+  const byHour: Record<number, { gasto: number; cliques: number; impressoes: number; conversoes: number }> = {};
+
+  for (const r of rows) {
+    const h = r.segments?.hour;
+    if (h == null) continue;
+    if (!byHour[h]) byHour[h] = { gasto: 0, cliques: 0, impressoes: 0, conversoes: 0 };
+    byHour[h].gasto      += safeInt(r.metrics?.costMicros);
+    byHour[h].cliques    += safeInt(r.metrics?.clicks);
+    byHour[h].impressoes += safeInt(r.metrics?.impressions);
+    byHour[h].conversoes += safeFloat(r.metrics?.conversions);
+  }
+
+  return Array.from({ length: 24 }, (_, h) => {
+    const d = byHour[h] ?? { gasto: 0, cliques: 0, impressoes: 0, conversoes: 0 };
+    const ctr = d.impressoes > 0 ? (d.cliques / d.impressoes) * 100 : 0;
+    return {
+      hora: h,
+      gasto: micros(d.gasto),
+      cliques: d.cliques,
+      impressoes: d.impressoes,
+      conversoes: r2(d.conversoes),
+      ctr: r2(ctr),
+    };
+  });
+}
+
+// ─── Keyword Planner ─────────────────────────────────────────────────────────
+
+export interface GKeywordIdea {
+  keyword: string;
+  media_buscas_mensais: number;
+  competicao: string;
+  indice_competicao: number;
+  lance_topo_min: number;
+  lance_topo_max: number;
+  tendencia_mensal: Array<{ ano: number; mes: number; buscas: number }>;
+}
+
+async function keywordPlannerRequest<T>(
+  customerId: string,
+  method: string,
+  body: Record<string, unknown>
+): Promise<T> {
+  const accessToken = await getAccessToken();
+  const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+  const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? "").replace(/-/g, "");
+
+  if (!devToken) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN é obrigatório.");
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${accessToken}`,
+    "developer-token": devToken,
+  };
+  if (loginCustomerId) headers["login-customer-id"] = loginCustomerId;
+
+  const res = await fetch(
+    `${GOOGLE_ADS_BASE}/customers/${customerId}:${method}`,
+    { method: "POST", headers, body: JSON.stringify(body) }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google Ads Keyword Planner (${res.status}): ${err}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+export async function getGoogleAdsKeywordIdeas(
+  customerId: string,
+  keywords: string[],
+  idioma = "languageConstants/1014",
+  geo = "geoTargetConstants/2076"
+): Promise<GKeywordIdea[]> {
+  const data = await keywordPlannerRequest<{ results?: Array<{
+    text: string;
+    keywordIdeaMetrics?: {
+      avgMonthlySearches?: string;
+      competition?: string;
+      competitionIndex?: string;
+      lowTopOfPageBidMicros?: string;
+      highTopOfPageBidMicros?: string;
+      monthlySearchVolumes?: Array<{ year: number; month: string; monthlySearches: string }>;
+    };
+  }> }>(customerId, "generateKeywordIdeas", {
+    language: idioma,
+    geoTargetConstants: [geo],
+    keywordPlanNetwork: "GOOGLE_SEARCH",
+    keywordSeed: { keywords },
+  });
+
+  const MES: Record<string, number> = {
+    JANUARY:1, FEBRUARY:2, MARCH:3, APRIL:4, MAY:5, JUNE:6,
+    JULY:7, AUGUST:8, SEPTEMBER:9, OCTOBER:10, NOVEMBER:11, DECEMBER:12,
+  };
+
+  return (data.results ?? []).map(r => {
+    const m = r.keywordIdeaMetrics;
+    return {
+      keyword: r.text ?? "",
+      media_buscas_mensais: safeInt(m?.avgMonthlySearches),
+      competicao: m?.competition ?? "UNSPECIFIED",
+      indice_competicao: safeInt(m?.competitionIndex),
+      lance_topo_min: micros(m?.lowTopOfPageBidMicros ?? "0"),
+      lance_topo_max: micros(m?.highTopOfPageBidMicros ?? "0"),
+      tendencia_mensal: (m?.monthlySearchVolumes ?? []).map(v => ({
+        ano: v.year,
+        mes: MES[v.month] ?? 0,
+        buscas: safeInt(v.monthlySearches),
+      })).sort((a, b) => a.ano !== b.ano ? a.ano - b.ano : a.mes - b.mes),
+    };
+  }).sort((a, b) => b.media_buscas_mensais - a.media_buscas_mensais);
+}
