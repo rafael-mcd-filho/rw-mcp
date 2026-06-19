@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PdfReportModel } from "./report.js";
+import { moneyBR, intBR, pctBR } from "./format.js";
 import {
   BASE_REPORT_CSS,
   escapeHtml,
@@ -16,22 +17,6 @@ import {
 } from "./pdf-components.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-
-const moneyBR = (n: number): string =>
-  "R$ " +
-  (Number(n) || 0).toLocaleString("pt-BR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-const intBR = (n: number): string =>
-  (Number(n) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
-
-const pctBR = (n: number): string =>
-  (Number(n) || 0).toLocaleString("pt-BR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }) + "%";
 
 type CampaignRow = PdfReportModel["campanhas"][number];
 type ObjectiveRow = PdfReportModel["objetivos"][number];
@@ -176,12 +161,13 @@ function pageOne(model: PdfReportModel, logo: string | null): string {
   const objectiveTable = renderTable(model.objetivos, objectiveColumns());
   const campaigns = model.campanhas.slice(0, 4);
   const topCampaigns = renderTable(campaigns, campaignColumns(true), true);
+  const channels = model.meta.channels.join(" e ");
   const acquisitionText =
     model.resumo.leituraExecutiva[0] ??
     "Sem volume suficiente para leitura executiva de aquisição.";
   const presenceText =
     model.resumo.leituraExecutiva[1] ??
-    "Objetivos de apoio devem ser lidos separadamente para evitar mistura de métricas.";
+    "Canais e objetivos devem ser lidos separadamente para evitar mistura de métricas.";
 
   return renderPage(
     model,
@@ -189,7 +175,7 @@ function pageOne(model: PdfReportModel, logo: string | null): string {
     3,
     `<div class="hero">
       <h1>Check-in de performance</h1>
-      <p class="lead">Leitura consolidada das campanhas de Meta Ads no período, com objetivos separados por tipo de resultado, investimento e custo por ação.</p>
+      <p class="lead">Leitura consolidada das campanhas de ${escapeHtml(channels)} no período, com resultados separados por canal, investimento e custo por ação.</p>
     </div>
     ${renderKpiGrid(model.resumo.kpis)}
     <section class="section">
@@ -207,7 +193,7 @@ function pageOne(model: PdfReportModel, logo: string | null): string {
         <p>${escapeHtml(acquisitionText)}</p>
       </div>
       <div class="panel dark">
-        <h3>Leitura de presença</h3>
+        <h3>Leitura complementar</h3>
         <p>${escapeHtml(presenceText)}</p>
       </div>
     </div>`,
@@ -299,7 +285,7 @@ function pageThree(model: PdfReportModel, logo: string | null): string {
     label: day.data,
     value: day.gasto,
     valueLabel: moneyBR(day.gasto),
-    note: `${intBR(day.resultados)} resultados de conversão`,
+    note: `${intBR(day.resultados)} resultados`,
   }));
 
   const objectiveBars: BarItem[] = model.objetivos.slice(0, 5).map((objective) => ({

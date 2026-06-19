@@ -567,6 +567,10 @@ const CONVERSION_CATEGORIES = new Set(["lead_form", "messages", "sales"]);
 
 type PdfReportKind =
   | "mixed"
+  | "google"
+  | "google_comparison"
+  | "integrated"
+  | "integrated_comparison"
   | "lead"
   | "messages"
   | "awareness"
@@ -581,8 +585,30 @@ interface PdfKpiCard {
   tone: "red" | "black";
 }
 
-interface PdfObjectiveSummary {
-  category: ObjectiveCategory;
+export interface PdfCampaignRow {
+  nome: string;
+  categoria: string;
+  headlineLabel: string;
+  costLabel: string;
+  categoriaLabel: string;
+  primaryMetric: "conversion" | "reach";
+  gasto: number;
+  resultado: number;
+  custo: number;
+  cliques: number;
+  impressoes: number;
+  alcance: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  frequencia: number;
+  thruplay: number;
+  valorConversao: number;
+  roas: number;
+}
+
+export interface PdfObjectiveSummary {
+  category: string;
   label: string;
   headlineLabel: string;
   costLabel: string;
@@ -622,16 +648,16 @@ export interface PdfReportModel {
   };
   objetivoPrincipal: PdfObjectiveSummary | null;
   objetivos: PdfObjectiveSummary[];
-  campanhas: ReturnType<typeof buildAccountReport>["campanhas"];
+  campanhas: PdfCampaignRow[];
   serieDiaria: Array<{ data: string; gasto: number; resultados: number }>;
   notasMetodologicas: string[];
   proximosPassos: string[];
 }
 
 function summarizeObjectives(
-  campanhas: ReturnType<typeof buildAccountReport>["campanhas"]
+  campanhas: PdfCampaignRow[]
 ): PdfObjectiveSummary[] {
-  const grouped: Partial<Record<ObjectiveCategory, PdfObjectiveSummary>> = {};
+  const grouped: Record<string, PdfObjectiveSummary | undefined> = {};
 
   for (const c of campanhas) {
     const existing = grouped[c.categoria];
@@ -669,6 +695,7 @@ function summarizeObjectives(
   }
 
   return Object.values(grouped)
+    .filter((o): o is PdfObjectiveSummary => Boolean(o))
     .map((o) => ({
       ...o,
       gasto: round2(o.gasto),
@@ -724,7 +751,7 @@ function buildExecutiveRead(
  * (fadiga de público) e destaque para escalar. Sem texto genérico.
  */
 function buildNextSteps(
-  campanhas: ReturnType<typeof buildAccountReport>["campanhas"]
+  campanhas: PdfCampaignRow[]
 ): string[] {
   const ativas = campanhas.filter((c) => c.gasto > 0);
   if (!ativas.length) {

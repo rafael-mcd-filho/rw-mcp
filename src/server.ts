@@ -2,7 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { basename } from "node:path";
 import { z } from "zod";
 import { MetaAdsClient } from "./meta-api.js";
-import { buildReport, buildAccountReport, buildPdfModel, buildDailySeries } from "./report.js";
+import {
+  buildReport,
+  buildAccountReport,
+  buildPdfModel,
+  buildDailySeries,
+  type PdfReportModel,
+} from "./report.js";
 import {
   googleAdsConfigured,
   listGoogleAdsAccounts,
@@ -15,6 +21,20 @@ import {
   getGoogleAdsKeywordIdeas,
   getGoogleAdsSearchTerms,
 } from "./google-ads-api.js";
+import {
+  buildGoogleAdsReport,
+  buildGoogleAdsComparison,
+  buildGooglePdfModel,
+  buildGoogleComparisonPdfModel,
+  buildIntegratedReport,
+  buildIntegratedComparisonReport,
+  buildIntegratedPdfModel,
+  buildIntegratedComparisonPdfModel,
+  type DailyPoint,
+  type GoogleAdsEnhancedReport,
+  type IntegratedReport,
+  type MetaAccountReportLike,
+} from "./google-report.js";
 import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
 
 const ACCOUNT_DESC =
@@ -144,6 +164,15 @@ const DATE_PRESET_SCHEMA = {
   periodo: z.string().optional().describe("Alias de date_preset quando usar presets como this_month."),
 };
 
+const COMPARE_PERIOD_SCHEMA = {
+  compare_since: z.string().optional().describe("Inicio do periodo anterior (YYYY-MM-DD)."),
+  compare_until: z.string().optional().describe("Fim do periodo anterior (YYYY-MM-DD)."),
+  compare_start_date: z.string().optional().describe("Alias de compare_since."),
+  compare_end_date: z.string().optional().describe("Alias de compare_until."),
+  previous_since: z.string().optional().describe("Alias de compare_since."),
+  previous_until: z.string().optional().describe("Alias de compare_until."),
+};
+
 const DAILY_SCHEMA = {
   incluir_diario: z.boolean().optional().describe(
     "Inclui a evolução dia a dia (gasto, resultados, cliques, CTR e custo por resultado de cada dia) além dos totais. Use quando o usuário pedir análise diária."
@@ -245,6 +274,15 @@ type ClientNameArgs = {
   cliente?: string;
   customer_name?: string;
   account_name?: string;
+};
+
+type ComparePeriodArgs = {
+  compare_since?: string;
+  compare_until?: string;
+  compare_start_date?: string;
+  compare_end_date?: string;
+  previous_since?: string;
+  previous_until?: string;
 };
 
 function scalarToString(value: string | number | undefined): string | undefined {
@@ -397,6 +435,73 @@ function clientNameFrom(args: ClientNameArgs): string | undefined {
 function requireValue(value: string | undefined, field: string): string {
   if (!value) throw new Error(`Parametro obrigatorio ausente: ${field}`);
   return value;
+}
+
+function comparePeriodFrom(args: ComparePeriodArgs): { since?: string; until?: string } {
+  return {
+    since: args.compare_since ?? args.compare_start_date ?? args.previous_since,
+    until: args.compare_until ?? args.compare_end_date ?? args.previous_until,
+  };
+}
+
+function periodLabelFrom(since?: string, until?: string, preset?: string): string {
+  return since && until ? `${since} a ${until}` : preset ?? "ultimos 30 dias";
+}
+
+async function renderPdfToolResponse(model: PdfReportModel, clientName: string) {
+  const pdf = await import("./pdf.js");
+  const slug = clientName
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .toLowerCase().slice(0, 60);
+
+  if (process.env.VERCEL) {
+    const { pdf: buffer, pageCount } = await pdf.renderReportPdf(model);
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return toolError(
+        `PDF renderizado (${pageCount} paginas, ${Math.round(buffer.length / 1024)} KB), ` +
+          "mas falta armazenamento. Defina BLOB_READ_WRITE_TOKEN para receber o link."
+      );
+    }
+    const { put } = await import("@vercel/blob");
+    const stamp = new Date().toISOString().slice(0, 10);
+    const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
+      access: "public",
+      token: blobToken,
+      contentType: "application/pdf",
+      addRandomSuffix: true,
+    });
+    return {
+      content: [{ type: "text" as const, text: `PDF gerado (${pageCount} paginas):\n${result.url}` }],
+    };
+  }
+
+  const result = await pdf.generatePdf(model, clientName);
+  const publicBase = process.env.PUBLIC_BASE_URL;
+  if (publicBase) {
+    const fileUrl = `${publicBase.replace(/\/$/, "")}/files/${basename(result.pdfPath)}`;
+    return {
+      content: [{ type: "text" as const, text: `PDF gerado (${result.pageCount} paginas):\n${fileUrl}` }],
+    };
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `PDF gerado com sucesso:\n${result.pdfPath}\n\n` +
+          `Previa PNG:\n${result.previewPath}\n\n` +
+          `Paginas: ${result.pageCount}`,
+      },
+    ],
+  };
+}
+
+async function qaPdfToolResponse(model: PdfReportModel) {
+  const pdf = await import("./pdf.js");
+  return json(await pdf.qaReportPdf(model));
 }
 
 export function createMcpServer(
@@ -848,6 +953,9 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       "ID da conta Google Ads (somente números, sem traços). Use list_google_ads_accounts para descobrir."
     ),
     customerId: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+    google_customer_id: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+    googleCustomerId: OPTIONAL_SCALAR.describe("Alias de customer_id."),
+    id_conta_google: OPTIONAL_SCALAR.describe("Alias de customer_id."),
     conta_id: OPTIONAL_SCALAR.describe("Alias de customer_id."),
     account_id: OPTIONAL_SCALAR.describe("Alias de customer_id."),
   };
@@ -855,15 +963,230 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
   function gadsCustomerId(args: {
     customer_id?: string | number;
     customerId?: string | number;
+    google_customer_id?: string | number;
+    googleCustomerId?: string | number;
+    id_conta_google?: string | number;
     conta_id?: string | number;
     account_id?: string | number;
   }): string | undefined {
-    const raw = args.customer_id ?? args.customerId ?? args.conta_id ?? args.account_id;
+    const raw =
+      args.customer_id ??
+      args.customerId ??
+      args.google_customer_id ??
+      args.googleCustomerId ??
+      args.id_conta_google ??
+      args.conta_id ??
+      args.account_id;
     if (raw == null) return undefined;
     return String(raw).replace(/-/g, "").trim() || undefined;
   }
 
   if (googleAdsConfigured()) {
+    // As tools qa_* são auxiliares de QA visual (uso interno antes do 1º envio).
+    // Ficam ocultas por padrão para não poluir a lista que o modelo escolhe;
+    // exponha com EXPOSE_QA_TOOLS=1.
+    const exposeQa =
+      process.env.EXPOSE_QA_TOOLS === "1" || process.env.EXPOSE_QA_TOOLS === "true";
+
+    type IntegratedArgs = AccountIdArgs & PeriodArgs & DatePresetArgs & ClientNameArgs & {
+      nome_cliente?: string;
+      nomeCliente?: string;
+      meta_account_id?: string | number;
+      id_conta_meta_ads?: string | number;
+      customer_id?: string | number;
+      customerId?: string | number;
+      google_customer_id?: string | number;
+      googleCustomerId?: string | number;
+      id_conta_google?: string | number;
+      incluir_meta?: boolean;
+      incluir_google?: boolean;
+      incluir_keywords?: boolean;
+      keywords?: boolean;
+      incluir_termos_pesquisa?: boolean;
+      termos_pesquisa?: boolean;
+      limit_keywords?: number;
+      limit_search_terms?: number;
+      limit_termos_pesquisa?: number;
+    };
+
+    const INTEGRATED_SCHEMA = {
+      ...CLIENT_NAME_LOOKUP_SCHEMA,
+      ...CLIENT_NAME_SCHEMA,
+      meta_account_id: OPTIONAL_SCALAR.describe("ID da conta Meta Ads. Alias de account_id para relatorio integrado."),
+      id_conta_meta_ads: OPTIONAL_SCALAR.describe("Alias de meta_account_id."),
+      account_id: OPTIONAL_SCALAR.describe("Alias de meta_account_id no relatorio integrado."),
+      ad_account_id: OPTIONAL_SCALAR.describe("Alias de meta_account_id."),
+      google_customer_id: OPTIONAL_SCALAR.describe("ID da conta Google Ads, sem tracos."),
+      googleCustomerId: OPTIONAL_SCALAR.describe("Alias de google_customer_id."),
+      customer_id: OPTIONAL_SCALAR.describe("Alias de google_customer_id."),
+      customerId: OPTIONAL_SCALAR.describe("Alias de google_customer_id."),
+      id_conta_google: OPTIONAL_SCALAR.describe("Alias de google_customer_id."),
+      incluir_meta: z.boolean().optional().describe("Se false, nao busca Meta Ads."),
+      incluir_google: z.boolean().optional().describe("Se false, nao busca Google Ads."),
+      incluir_keywords: z.boolean().optional().describe("Inclui top keywords na leitura Google. Padrao: true."),
+      keywords: z.boolean().optional().describe("Alias de incluir_keywords."),
+      incluir_termos_pesquisa: z.boolean().optional().describe("Inclui termos de pesquisa reais. Padrao: true."),
+      termos_pesquisa: z.boolean().optional().describe("Alias de incluir_termos_pesquisa."),
+      limit_keywords: z.number().optional().describe("Limite de keywords analisadas. Padrao: 10."),
+      limit_search_terms: z.number().optional().describe("Limite de termos de pesquisa. Padrao: 10."),
+      limit_termos_pesquisa: z.number().optional().describe("Alias de limit_search_terms."),
+      ...OPTIONAL_PERIOD_SCHEMA,
+      ...DATE_PRESET_SCHEMA,
+      ...COMMON_COMPAT_SCHEMA,
+    };
+
+    const GOOGLE_DETAILS_SCHEMA = {
+      incluir_keywords: z.boolean().optional().describe("Inclui top keywords na leitura executiva. Padrao: true."),
+      keywords: z.boolean().optional().describe("Alias de incluir_keywords."),
+      incluir_termos_pesquisa: z.boolean().optional().describe("Inclui termos de pesquisa reais. Padrao: true."),
+      termos_pesquisa: z.boolean().optional().describe("Alias de incluir_termos_pesquisa."),
+      limit_keywords: z.number().optional().describe("Limite de keywords analisadas. Padrao: 10."),
+      limit_search_terms: z.number().optional().describe("Limite de termos de pesquisa. Padrao: 10."),
+      limit_termos_pesquisa: z.number().optional().describe("Alias de limit_search_terms."),
+    };
+
+    type GoogleDetailsArgs = {
+      incluir_keywords?: boolean;
+      keywords?: boolean;
+      incluir_termos_pesquisa?: boolean;
+      termos_pesquisa?: boolean;
+      limit_keywords?: number;
+      limit_search_terms?: number;
+      limit_termos_pesquisa?: number;
+    };
+
+    async function fetchGoogleDetails(
+      cid: string,
+      since: string | undefined,
+      until: string | undefined,
+      datePreset: string | undefined,
+      args: GoogleDetailsArgs,
+      defaultOn = true
+    ) {
+      const includeKeywords = args.incluir_keywords ?? args.keywords ?? defaultOn;
+      const includeTerms = args.incluir_termos_pesquisa ?? args.termos_pesquisa ?? defaultOn;
+      const keywordLimit = args.limit_keywords ?? 10;
+      const termsLimit = args.limit_search_terms ?? args.limit_termos_pesquisa ?? 10;
+      const [keywords, searchTerms] = await Promise.all([
+        includeKeywords
+          ? getGoogleAdsKeywords(cid, since, until, datePreset, keywordLimit)
+          : Promise.resolve([]),
+        includeTerms
+          ? getGoogleAdsSearchTerms(cid, since, until, datePreset, termsLimit)
+          : Promise.resolve([]),
+      ]);
+      return { keywords, searchTerms };
+    }
+
+    function integratedMetaAccountId(
+      args: IntegratedArgs,
+      record?: { id_conta_meta_ads?: string }
+    ): string | undefined {
+      return scalarToString(
+        args.meta_account_id ??
+          args.id_conta_meta_ads ??
+          accountIdFrom(args) ??
+          record?.id_conta_meta_ads
+      );
+    }
+
+    function integratedGoogleCustomerId(
+      args: IntegratedArgs,
+      record?: { id_conta_google?: string }
+    ): string | undefined {
+      const raw =
+        args.google_customer_id ??
+        args.googleCustomerId ??
+        args.customer_id ??
+        args.customerId ??
+        args.id_conta_google ??
+        record?.id_conta_google;
+      if (raw == null) return undefined;
+      return String(raw).replace(/-/g, "").trim() || undefined;
+    }
+
+    async function buildIntegratedPayload(
+      args: IntegratedArgs,
+      includeDaily = false
+    ): Promise<{
+      report: IntegratedReport;
+      metaDaily?: DailyPoint[];
+      googleDaily?: Awaited<ReturnType<typeof getGoogleAdsDailySeries>>;
+    }> {
+      const lookupName = clientNameLookup(args as Record<string, unknown>);
+      const record =
+        lookupName && clientsConfigured()
+          ? await findClient(lookupName)
+          : undefined;
+      if (lookupName && clientsConfigured() && !record) {
+        throw new Error(`Cliente "${lookupName}" nao encontrado na base.`);
+      }
+
+      const clientName =
+        clientNameFrom(args) ??
+        record?.nome_cliente ??
+        lookupName ??
+        "Relatorio integrado";
+      const { since, until } = periodFrom(args);
+      const datePreset = datePresetFrom(args);
+      const periodLabel = periodLabelFrom(since, until, datePreset);
+      const wantsMeta = args.incluir_meta ?? true;
+      const wantsGoogle = args.incluir_google ?? true;
+      const metaAccountId = integratedMetaAccountId(args, record);
+      const googleCustomerId = integratedGoogleCustomerId(args, record);
+      let metaReport: MetaAccountReportLike | undefined;
+      let googleReport: GoogleAdsEnhancedReport | undefined;
+      let metaDaily: DailyPoint[] | undefined;
+      let googleDaily: Awaited<ReturnType<typeof getGoogleAdsDailySeries>> | undefined;
+
+      if (wantsMeta && metaAccountId) {
+        const [rows, dailyRows] = await Promise.all([
+          client.getInsights({ level: "campaign", since, until, datePreset, accountId: metaAccountId }),
+          includeDaily
+            ? client.getInsights({
+                level: "campaign",
+                since,
+                until,
+                datePreset,
+                timeIncrement: 1,
+                accountId: metaAccountId,
+              })
+            : Promise.resolve([]),
+        ]);
+        metaReport = buildAccountReport(rows, periodLabel) as MetaAccountReportLike;
+        if (includeDaily) metaDaily = buildDailySeries(dailyRows) as DailyPoint[];
+      }
+
+      if (wantsGoogle && googleCustomerId) {
+        const [rawGoogle, dailyRows, details] = await Promise.all([
+          getGoogleAdsAccountReport(googleCustomerId, since, until, datePreset),
+          includeDaily
+            ? getGoogleAdsDailySeries(googleCustomerId, since, until, datePreset)
+            : Promise.resolve([]),
+          fetchGoogleDetails(googleCustomerId, since, until, datePreset, args),
+        ]);
+        googleReport = buildGoogleAdsReport(rawGoogle, { clientName, ...details });
+        if (includeDaily) googleDaily = dailyRows;
+      }
+
+      if (!metaReport && !googleReport) {
+        throw new Error(
+          "Nao foi possivel montar o relatorio: informe nome_cliente com IDs cadastrados ou passe meta_account_id/google_customer_id."
+        );
+      }
+
+      return {
+        report: buildIntegratedReport({
+          clientName,
+          periodLabel,
+          metaReport,
+          googleReport,
+        }),
+        metaDaily,
+        googleDaily,
+      };
+    }
+
     server.tool(
       "list_google_ads_accounts",
       "Lista todas as contas Google Ads acessíveis pelo MCC configurado. Use para descobrir os IDs de cada conta antes de buscar relatórios.",
@@ -873,18 +1196,308 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
 
     server.tool(
       "get_google_ads_account_report",
-      `Relatório consolidado de uma conta Google Ads: resumo (gasto, impressões, cliques, conversões, CTR, CPC médio, custo por conversão) e lista de campanhas com métricas individuais.
-Passe customer_id (ID da conta, sem traços). Sem período: usa últimos 30 dias.`,
+      `Relatório consolidado de uma conta Google Ads: resumo (gasto, impressões, cliques, conversões, CTR, CPC médio, custo por conversão), campanhas, leitura executiva e mensagem pronta.
+Passe customer_id (ID da conta, sem traços). Sem período: usa últimos 30 dias.
+Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue com incluir_keywords/incluir_termos_pesquisa quando quiser o detalhamento.`,
       {
         ...GADS_CUSTOMER_SCHEMA,
         ...OPTIONAL_PERIOD_SCHEMA,
         ...DATE_PRESET_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
         ...COMMON_COMPAT_SCHEMA,
       },
       async (args) => {
         const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
         const cid = requireValue(gadsCustomerId(args), "customer_id");
-        return json(await getGoogleAdsAccountReport(cid, since, until, datePresetFrom(args)));
+        const [report, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          fetchGoogleDetails(cid, since, until, datePreset, args, false),
+        ]);
+        return json(buildGoogleAdsReport(report, { clientName: clientNameFrom(args), ...details }));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_account_comparison",
+      `Comparativo de periodo do Google Ads. Busca periodo atual e periodo anterior, calcula variacoes de gasto, conversoes, CPA, cliques, CTR, CPC e compara campanhas por ID.`,
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const [current, previous, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          getGoogleAdsAccountReport(cid, compareSince, compareUntil),
+          fetchGoogleDetails(cid, since, until, datePreset, args),
+        ]);
+        return json(buildGoogleAdsComparison(current, previous, { clientName: clientNameFrom(args), ...details }));
+      }
+    );
+
+    server.tool(
+      "generate_google_comparison_report_pdf",
+      "Gera PDF comparativo do Google Ads entre periodo atual e anterior.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const [current, previous, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          getGoogleAdsAccountReport(cid, compareSince, compareUntil),
+          fetchGoogleDetails(cid, since, until, datePreset, args),
+        ]);
+        const comparison = buildGoogleAdsComparison(current, previous, {
+          clientName: clientNameFrom(args),
+          ...details,
+        });
+        const model = buildGoogleComparisonPdfModel(comparison);
+        return renderPdfToolResponse(model, comparison.cliente ?? `Google Ads ${cid}`);
+      }
+    );
+
+    if (exposeQa) server.tool(
+      "qa_google_comparison_report_pdf",
+      "Executa QA visual do PDF comparativo Google Ads sem salvar arquivo.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const [current, previous, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          getGoogleAdsAccountReport(cid, compareSince, compareUntil),
+          fetchGoogleDetails(cid, since, until, datePreset, args),
+        ]);
+        const comparison = buildGoogleAdsComparison(current, previous, {
+          clientName: clientNameFrom(args),
+          ...details,
+        });
+        return qaPdfToolResponse(buildGoogleComparisonPdfModel(comparison));
+      }
+    );
+
+    server.tool(
+      "generate_google_report_pdf",
+      "Gera PDF executivo de Google Ads com resumo, campanhas, leitura e proximos passos.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const [rawReport, dailyRows, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          getGoogleAdsDailySeries(cid, since, until, datePreset),
+          fetchGoogleDetails(cid, since, until, datePreset, args),
+        ]);
+        const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
+        const model = buildGooglePdfModel(report, dailyRows);
+        return renderPdfToolResponse(model, report.cliente ?? `Google Ads ${cid}`);
+      }
+    );
+
+    if (exposeQa) server.tool(
+      "qa_google_report_pdf",
+      "Executa QA visual do PDF Google Ads sem salvar arquivo.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        ...CLIENT_NAME_SCHEMA,
+        ...GOOGLE_DETAILS_SCHEMA,
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const [rawReport, dailyRows, details] = await Promise.all([
+          getGoogleAdsAccountReport(cid, since, until, datePreset),
+          getGoogleAdsDailySeries(cid, since, until, datePreset),
+          fetchGoogleDetails(cid, since, until, datePreset, args),
+        ]);
+        const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
+        return qaPdfToolResponse(buildGooglePdfModel(report, dailyRows));
+      }
+    );
+
+    server.tool(
+      "get_client_performance_report",
+      `Relatorio integrado por cliente. Quando houver nome_cliente na base, resolve IDs Meta Ads e Google Ads automaticamente; tambem aceita meta_account_id e google_customer_id explicitos.`,
+      INTEGRATED_SCHEMA,
+      async (args) => {
+        return json((await buildIntegratedPayload(args as IntegratedArgs)).report);
+      }
+    );
+
+    server.tool(
+      "generate_integrated_report_pdf",
+      "Gera PDF integrado com Meta Ads e Google Ads, mantendo resultados separados por canal e notas metodologicas.",
+      INTEGRATED_SCHEMA,
+      async (args) => {
+        const payload = await buildIntegratedPayload(args as IntegratedArgs, true);
+        const model = buildIntegratedPdfModel({
+          report: payload.report,
+          metaDaily: payload.metaDaily,
+          googleDaily: payload.googleDaily,
+        });
+        return renderPdfToolResponse(model, payload.report.cliente);
+      }
+    );
+
+    if (exposeQa) server.tool(
+      "qa_integrated_report_pdf",
+      "Executa QA visual do PDF integrado sem salvar arquivo.",
+      INTEGRATED_SCHEMA,
+      async (args) => {
+        const payload = await buildIntegratedPayload(args as IntegratedArgs, true);
+        const model = buildIntegratedPdfModel({
+          report: payload.report,
+          metaDaily: payload.metaDaily,
+          googleDaily: payload.googleDaily,
+        });
+        return qaPdfToolResponse(model);
+      }
+    );
+
+    server.tool(
+      "get_client_performance_comparison",
+      "Comparativo integrado por cliente entre periodo atual e anterior, mantendo Meta Ads e Google Ads separados.",
+      {
+        ...INTEGRATED_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+      },
+      async (args) => {
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const previousArgs = {
+          ...(args as Record<string, unknown>),
+          since: compareSince,
+          until: compareUntil,
+          date_preset: undefined,
+          datePreset: undefined,
+          preset: undefined,
+          period: undefined,
+          periodo: undefined,
+        } as IntegratedArgs;
+        const [current, previous] = await Promise.all([
+          buildIntegratedPayload(args as IntegratedArgs),
+          buildIntegratedPayload(previousArgs),
+        ]);
+        return json(buildIntegratedComparisonReport({
+          current: current.report,
+          previous: previous.report,
+        }));
+      }
+    );
+
+    server.tool(
+      "generate_integrated_comparison_report_pdf",
+      "Gera PDF comparativo integrado com Meta Ads e Google Ads entre periodo atual e anterior.",
+      {
+        ...INTEGRATED_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+      },
+      async (args) => {
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const previousArgs = {
+          ...(args as Record<string, unknown>),
+          since: compareSince,
+          until: compareUntil,
+          date_preset: undefined,
+          datePreset: undefined,
+          preset: undefined,
+          period: undefined,
+          periodo: undefined,
+        } as IntegratedArgs;
+        const [current, previous] = await Promise.all([
+          buildIntegratedPayload(args as IntegratedArgs),
+          buildIntegratedPayload(previousArgs),
+        ]);
+        const comparison = buildIntegratedComparisonReport({
+          current: current.report,
+          previous: previous.report,
+        });
+        const model = buildIntegratedComparisonPdfModel(comparison);
+        return renderPdfToolResponse(model, comparison.cliente);
+      }
+    );
+
+    if (exposeQa) server.tool(
+      "qa_integrated_comparison_report_pdf",
+      "Executa QA visual do PDF comparativo integrado sem salvar arquivo.",
+      {
+        ...INTEGRATED_SCHEMA,
+        ...COMPARE_PERIOD_SCHEMA,
+      },
+      async (args) => {
+        const compare = comparePeriodFrom(args);
+        const compareSince = requireValue(compare.since, "compare_since");
+        const compareUntil = requireValue(compare.until, "compare_until");
+        const previousArgs = {
+          ...(args as Record<string, unknown>),
+          since: compareSince,
+          until: compareUntil,
+          date_preset: undefined,
+          datePreset: undefined,
+          preset: undefined,
+          period: undefined,
+          periodo: undefined,
+        } as IntegratedArgs;
+        const [current, previous] = await Promise.all([
+          buildIntegratedPayload(args as IntegratedArgs),
+          buildIntegratedPayload(previousArgs),
+        ]);
+        const comparison = buildIntegratedComparisonReport({
+          current: current.report,
+          previous: previous.report,
+        });
+        return qaPdfToolResponse(buildIntegratedComparisonPdfModel(comparison));
       }
     );
 

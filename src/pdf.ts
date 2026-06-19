@@ -103,11 +103,43 @@ function renderHtml(data: PdfReportModel): string {
   return renderPdfHtml(data);
 }
 
-/** Abre a página, valida estouro de A4 e entrega ao callback. */
+export interface PdfPageCheck {
+  page: number;
+  overflow: boolean;
+  textLength: number;
+  visibleElements: number;
+  brokenImages: number;
+}
+
+export interface PdfQaResult {
+  ok: boolean;
+  pageCount: number;
+  checks: PdfPageCheck[];
+  problems: string[];
+}
+
+/** Páginas com pouco conteúdo aparente (heurística de "página vazia"). */
+function blankPages(metrics: PdfPageCheck[]): number[] {
+  return metrics
+    .filter((m) => m.textLength < 40 || m.visibleElements < 8)
+    .map((m) => m.page);
+}
+
+/**
+ * Abre a página, mede cada folha A4 e entrega ao callback.
+ *
+ * `hardFailOverflow` (padrão true) lança erro quando o conteúdo estoura a
+ * folha — esse é um defeito real de layout que corromperia o PDF. Páginas
+ * aparentemente vazias e imagens quebradas viram apenas `console.warn` aqui;
+ * a checagem dura desses casos fica nas tools `qa_*`, que recebem as métricas
+ * e decidem `ok`/`problems` sem abortar a geração.
+ */
 async function withPage<T>(
   data: PdfReportModel,
-  fn: (page: Page, pageCount: number) => Promise<T>
+  fn: (page: Page, pageCount: number, checks: PdfPageCheck[]) => Promise<T>,
+  opts: { hardFailOverflow?: boolean } = {}
 ): Promise<T> {
+  const hardFailOverflow = opts.hardFailOverflow ?? true;
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
@@ -135,10 +167,24 @@ async function withPage<T>(
       [...document.querySelectorAll<HTMLElement>(".page")].map((el, i) => ({
         page: i + 1,
         overflow: el.scrollHeight - el.clientHeight > 2,
+        textLength: (el.innerText ?? "").trim().length,
+        visibleElements: [...el.querySelectorAll<HTMLElement>("*")].filter((child) => {
+          const style = window.getComputedStyle(child);
+          const rect = child.getBoundingClientRect();
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        }).length,
+        brokenImages: [...el.querySelectorAll<HTMLImageElement>("img")].filter(
+          (img) => !img.complete || img.naturalWidth === 0
+        ).length,
       }))
     );
     const overflow = metrics.filter((m) => m.overflow);
-    if (overflow.length) {
+    if (overflow.length && hardFailOverflow) {
       throw new Error(
         `Conteúdo excedeu a folha A4 nas páginas: ${overflow
           .map((m) => m.page)
@@ -146,7 +192,23 @@ async function withPage<T>(
       );
     }
 
-    return await fn(page, metrics.length || 1);
+    const blank = blankPages(metrics);
+    if (blank.length) {
+      console.warn(
+        `[pdf] páginas aparentemente vazias ou incompletas: ${blank.join(", ")}`
+      );
+    }
+
+    const brokenImages = metrics.filter((m) => m.brokenImages > 0);
+    if (brokenImages.length) {
+      console.warn(
+        `[pdf] imagens quebradas nas páginas: ${brokenImages
+          .map((m) => m.page)
+          .join(", ")}`
+      );
+    }
+
+    return await fn(page, metrics.length || 1, metrics);
   } finally {
     await browser.close();
   }
@@ -167,6 +229,39 @@ export async function renderReportPdf(
     const pdf = Buffer.from(await page.pdf(PDF_OPTS));
     return { pdf, pageCount };
   });
+}
+
+/**
+ * Roda a mesma montagem do PDF e devolve um laudo de QA visual sem salvar
+ * arquivo nem abortar. Diferente do caminho de render, aqui nada lança: o
+ * resultado reporta `ok` + a lista de `problems` (overflow, páginas vazias,
+ * imagens quebradas) para inspeção antes do primeiro envio.
+ */
+export async function qaReportPdf(data: PdfReportModel): Promise<PdfQaResult> {
+  return withPage(
+    data,
+    async (_page, pageCount, checks) => {
+      const problems: string[] = [];
+
+      const overflow = checks.filter((c) => c.overflow).map((c) => c.page);
+      if (overflow.length) {
+        problems.push(`Conteúdo excedeu a folha A4 nas páginas: ${overflow.join(", ")}`);
+      }
+
+      const blank = blankPages(checks);
+      if (blank.length) {
+        problems.push(`Páginas aparentemente vazias ou incompletas: ${blank.join(", ")}`);
+      }
+
+      const broken = checks.filter((c) => c.brokenImages > 0).map((c) => c.page);
+      if (broken.length) {
+        problems.push(`Imagens quebradas nas páginas: ${broken.join(", ")}`);
+      }
+
+      return { ok: problems.length === 0, pageCount, checks, problems };
+    },
+    { hardFailOverflow: false }
+  );
 }
 
 export interface GeneratedPdf {

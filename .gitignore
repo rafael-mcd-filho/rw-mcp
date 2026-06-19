@@ -8,3 +8,9 @@ claude_desktop_config.json
 *.local
 
 .vercel
+.env*
+
+# scripts locais de OAuth/teste — contêm credenciais reais, nunca versionar
+get-refresh-token.mjs
+report-batista.mjs
+test-gads.mjs

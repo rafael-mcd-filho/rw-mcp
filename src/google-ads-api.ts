@@ -711,7 +711,8 @@ export async function getGoogleAdsSearchTerms(
   customerId: string,
   since?: string,
   until?: string,
-  preset?: string
+  preset?: string,
+  limit = 100
 ): Promise<GSearchTerm[]> {
   const where = dateClause(since, until, preset);
 
@@ -744,6 +745,7 @@ export async function getGoogleAdsSearchTerms(
       AND campaign.status != 'REMOVED'
       AND ad_group.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
+    LIMIT ${limit}
   `);
 
   return rows.map(r => ({
