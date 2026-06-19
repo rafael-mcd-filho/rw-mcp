@@ -692,6 +692,160 @@ export async function getGoogleAdsKeywordIdeas(
   }).sort((a, b) => b.media_buscas_mensais - a.media_buscas_mensais);
 }
 
+// ─── Conversion Actions ───────────────────────────────────────────────────────
+
+export interface GConversionAction {
+  nome: string;
+  conversoes: number;
+  todas_conversoes: number;
+}
+
+export async function getGoogleAdsConversionActions(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GConversionAction[]> {
+  const where = dateClause(since, until, preset);
+
+  try {
+    const rows = await gaqlSearch<{
+      segments: { conversionActionName: string };
+      metrics: { conversions: string; allConversions: string };
+    }>(customerId, `
+      SELECT
+        segments.conversion_action_name,
+        metrics.conversions,
+        metrics.all_conversions
+      FROM campaign
+      WHERE ${where}
+        AND campaign.status != 'REMOVED'
+      ORDER BY metrics.conversions DESC
+    `);
+
+    const byName: Record<string, { conversoes: number; todas: number }> = {};
+    for (const r of rows) {
+      const nome = r.segments?.conversionActionName ?? "(sem nome)";
+      if (!byName[nome]) byName[nome] = { conversoes: 0, todas: 0 };
+      byName[nome].conversoes += safeFloat(r.metrics?.conversions);
+      byName[nome].todas += safeFloat(r.metrics?.allConversions);
+    }
+
+    return Object.entries(byName)
+      .map(([nome, v]) => ({
+        nome,
+        conversoes: r2(v.conversoes),
+        todas_conversoes: r2(v.todas),
+      }))
+      .filter((x) => x.todas_conversoes > 0)
+      .sort((a, b) => b.todas_conversoes - a.todas_conversoes);
+  } catch {
+    return [];
+  }
+}
+
+// ─── Demographics ─────────────────────────────────────────────────────────────
+
+export interface GDemographicRow {
+  segmento: string;
+  impressoes: number;
+  cliques: number;
+  conversoes: number;
+  gasto: number;
+}
+
+export interface GDemographics {
+  por_genero: GDemographicRow[];
+  por_faixa_etaria: GDemographicRow[];
+}
+
+const GENDER_MAP: Record<string, string> = {
+  MALE: "Masculino",
+  FEMALE: "Feminino",
+  UNDETERMINED: "Desconhecido",
+  UNKNOWN: "Desconhecido",
+};
+
+const AGE_MAP: Record<string, string> = {
+  AGE_RANGE_18_24: "18–24",
+  AGE_RANGE_25_34: "25–34",
+  AGE_RANGE_35_44: "35–44",
+  AGE_RANGE_45_54: "45–54",
+  AGE_RANGE_55_64: "55–64",
+  AGE_RANGE_65_UP: "65+",
+  UNDETERMINED: "Desconhecido",
+};
+
+export async function getGoogleAdsDemographics(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GDemographics> {
+  const where = dateClause(since, until, preset);
+
+  const [genderRows, ageRows] = await Promise.all([
+    gaqlSearch<{
+      adGroupCriterion: { gender: { type: string } };
+      metrics: { impressions: string; clicks: string; conversions: string; costMicros: string };
+    }>(customerId, `
+      SELECT
+        ad_group_criterion.gender.type,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.cost_micros
+      FROM gender_view
+      WHERE ${where}
+        AND campaign.status != 'REMOVED'
+        AND ad_group.status != 'REMOVED'
+    `).catch(() => []),
+    gaqlSearch<{
+      adGroupCriterion: { ageRange: { type: string } };
+      metrics: { impressions: string; clicks: string; conversions: string; costMicros: string };
+    }>(customerId, `
+      SELECT
+        ad_group_criterion.age_range.type,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions,
+        metrics.cost_micros
+      FROM age_range_view
+      WHERE ${where}
+        AND campaign.status != 'REMOVED'
+        AND ad_group.status != 'REMOVED'
+    `).catch(() => []),
+  ]);
+
+  const aggGender: Record<string, GDemographicRow> = {};
+  for (const r of genderRows) {
+    const key = GENDER_MAP[r.adGroupCriterion?.gender?.type ?? ""] ?? "Desconhecido";
+    if (!aggGender[key]) aggGender[key] = { segmento: key, impressoes: 0, cliques: 0, conversoes: 0, gasto: 0 };
+    aggGender[key].impressoes += safeInt(r.metrics?.impressions);
+    aggGender[key].cliques += safeInt(r.metrics?.clicks);
+    aggGender[key].conversoes += r2(safeFloat(r.metrics?.conversions));
+    aggGender[key].gasto += micros(r.metrics?.costMicros ?? "0");
+  }
+
+  const AGE_ORDER = ["18–24", "25–34", "35–44", "45–54", "55–64", "65+", "Desconhecido"];
+  const aggAge: Record<string, GDemographicRow> = {};
+  for (const r of ageRows) {
+    const key = AGE_MAP[r.adGroupCriterion?.ageRange?.type ?? ""] ?? "Desconhecido";
+    if (!aggAge[key]) aggAge[key] = { segmento: key, impressoes: 0, cliques: 0, conversoes: 0, gasto: 0 };
+    aggAge[key].impressoes += safeInt(r.metrics?.impressions);
+    aggAge[key].cliques += safeInt(r.metrics?.clicks);
+    aggAge[key].conversoes += r2(safeFloat(r.metrics?.conversions));
+    aggAge[key].gasto += micros(r.metrics?.costMicros ?? "0");
+  }
+
+  return {
+    por_genero: Object.values(aggGender).filter((x) => x.impressoes > 0),
+    por_faixa_etaria: AGE_ORDER
+      .map((k) => aggAge[k])
+      .filter((x): x is GDemographicRow => !!x && x.impressoes > 0),
+  };
+}
+
 // ─── Search Terms ─────────────────────────────────────────────────────────────
 
 export interface GSearchTerm {

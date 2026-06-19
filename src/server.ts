@@ -20,6 +20,8 @@ import {
   getGoogleAdsHourlyBreakdown,
   getGoogleAdsKeywordIdeas,
   getGoogleAdsSearchTerms,
+  getGoogleAdsConversionActions,
+  getGoogleAdsDemographics,
 } from "./google-ads-api.js";
 import {
   buildGoogleAdsReport,
@@ -35,6 +37,7 @@ import {
   type IntegratedReport,
   type MetaAccountReportLike,
 } from "./google-report.js";
+import { renderGoogleReportHtml } from "./google-pdf.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
 import { resolveNiche } from "./intelligence/niche.js";
@@ -547,6 +550,70 @@ async function renderPdfToolResponse(
 async function qaPdfToolResponse(model: PdfReportModel) {
   const pdf = await import("./pdf.js");
   return json(await pdf.qaReportPdf(model));
+}
+
+async function renderHtmlPdfToolResponse(
+  html: string,
+  clientName: string,
+  formato: "pdf" | "html" = "pdf"
+) {
+  const slug = clientName
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .toLowerCase().slice(0, 60);
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (formato === "html") {
+    const name = `relatorio-${slug}-${stamp}.html`;
+    if (process.env.VERCEL) {
+      const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+      if (!blobToken) return toolError("HTML gerado, mas falta BLOB_READ_WRITE_TOKEN.");
+      const { put } = await import("@vercel/blob");
+      const result = await put(`relatorios/${name}`, html, {
+        access: "public", token: blobToken,
+        contentType: "text/html; charset=utf-8", addRandomSuffix: true,
+      });
+      return { content: [{ type: "text" as const, text: `Relatório HTML gerado:\n${result.url}` }] };
+    }
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "reports");
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, name);
+    writeFileSync(filePath, html, "utf8");
+    const publicBase = process.env.PUBLIC_BASE_URL;
+    const where = publicBase ? `${publicBase.replace(/\/$/, "")}/files/${name}` : filePath;
+    return { content: [{ type: "text" as const, text: `Relatório HTML gerado:\n${where}` }] };
+  }
+
+  const pdfLib = await import("./pdf.js");
+  if (process.env.VERCEL) {
+    const { pdf: buffer, pageCount } = await pdfLib.renderHtmlPdf(html);
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return toolError(
+        `PDF renderizado (${pageCount} páginas, ${Math.round(buffer.length / 1024)} KB), mas falta BLOB_READ_WRITE_TOKEN.`
+      );
+    }
+    const { put } = await import("@vercel/blob");
+    const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
+      access: "public", token: blobToken, contentType: "application/pdf", addRandomSuffix: true,
+    });
+    return { content: [{ type: "text" as const, text: `PDF gerado (${pageCount} páginas):\n${result.url}` }] };
+  }
+
+  const result = await pdfLib.saveHtmlPdf(html, clientName);
+  const publicBase = process.env.PUBLIC_BASE_URL;
+  if (publicBase) {
+    const fileUrl = `${publicBase.replace(/\/$/, "")}/files/${basename(result.pdfPath)}`;
+    return { content: [{ type: "text" as const, text: `PDF gerado (${result.pageCount} páginas):\n${fileUrl}` }] };
+  }
+  return {
+    content: [{
+      type: "text" as const,
+      text: `PDF gerado com sucesso:\n${result.pdfPath}\n\nPrévia PNG:\n${result.previewPath}\n\nPáginas: ${result.pageCount}`,
+    }],
+  };
 }
 
 export function createMcpServer(
@@ -1361,7 +1428,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
 
     server.tool(
       "generate_google_report_pdf",
-      "Gera relatório de Google Ads com resumo, campanhas, leitura e proximos passos. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
+      "Gera relatório de Google Ads com resumo, campanhas, grupos de anúncio, keywords, ações de conversão e demográficos. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
       {
         ...GADS_CUSTOMER_SCHEMA,
         ...OPTIONAL_PERIOD_SCHEMA,
@@ -1375,14 +1442,17 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         const { since, until } = periodFrom(args);
         const datePreset = datePresetFrom(args);
         const cid = requireValue(gadsCustomerId(args), "customer_id");
-        const [rawReport, dailyRows, details] = await Promise.all([
+        const [rawReport, dailyRows, details, adGroups, convActions, demographics] = await Promise.all([
           getGoogleAdsAccountReport(cid, since, until, datePreset),
           getGoogleAdsDailySeries(cid, since, until, datePreset),
           fetchGoogleDetails(cid, since, until, datePreset, args),
+          getGoogleAdsAdGroups(cid, since, until, datePreset).catch(() => []),
+          getGoogleAdsConversionActions(cid, since, until, datePreset).catch(() => []),
+          getGoogleAdsDemographics(cid, since, until, datePreset).catch(() => ({ por_genero: [], por_faixa_etaria: [] })),
         ]);
         const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
-        const model = buildGooglePdfModel(report, dailyRows);
-        return renderPdfToolResponse(model, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args));
+        const html = renderGoogleReportHtml(report, { adGroups, conversionActions: convActions, demographics, dailyRows });
+        return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args));
       }
     );
 
