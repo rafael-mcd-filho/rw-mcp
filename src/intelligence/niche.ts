@@ -82,6 +82,8 @@ export function normalizeNiche(contexto?: string): NicheResult {
 // antes de e-commerce; serviços locais como catch-all no fim).
 const LABEL_RULES: Array<{ slug: BenchmarkNiche; test: RegExp }> = [
   { slug: "franquias", test: /franqui/ },
+  // Automotivo/lava-jato ANTES de saúde, senão "estética automotiva" cai em estética.
+  { slug: "servicos_locais", test: /automotiv|lava.?jato/ },
   { slug: "imoveis", test: /corret|constru|imobil|imove|loteament|incorporad|empreendiment/ },
   { slug: "financeiro", test: /financ|credito|seguro|consorci|emprestim|\bbanco/ },
   { slug: "saude_estetica", test: /farmac|saude|odonto|psicolog|beleza|estetic|\bmedic|clinic|fisio|nutri|drogaria|dermat|cirurg|hospital|harmoniza|terapeut/ },
