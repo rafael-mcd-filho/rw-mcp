@@ -2,6 +2,7 @@
 // server.ts para não inchá-lo. Resolve cliente → IDs + contexto, busca por canal,
 // monta snapshots e roda o motor de inteligência.
 
+import { basename } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetaAdsClient } from "../meta-api.js";
@@ -18,6 +19,7 @@ import { googleSnapshot, metaSnapshot } from "../intelligence/snapshot.js";
 import { buildDiagnosis } from "../intelligence/diagnosis.js";
 import { buildAudit } from "../intelligence/audit.js";
 import type { AccountSnapshot } from "../intelligence/quality-gates.js";
+import { renderDiagnosisHtml, renderAuditHtml } from "../intelligence/intelligence-pdf.js";
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -68,6 +70,7 @@ const INTEL_SCHEMA = {
   date_preset: z.string().optional().describe("Alternativa a since/until (ex.: last_7d, last_30d)."),
   incluir_meta: z.boolean().optional().describe("Se false, não busca Meta. Padrão: true (se houver ID)."),
   incluir_google: z.boolean().optional().describe("Se false, não busca Google. Padrão: true (se houver ID)."),
+  formato: z.enum(["pdf", "html"]).optional().describe("'pdf' gera PDF para entrega (padrão ao informar este campo); 'html' gera dashboard navegável. Omita para retornar JSON."),
 };
 
 function periodOf(a: IntelArgs) {
@@ -152,6 +155,77 @@ async function buildSnapshots(
   return { cliente, periodo: label, nicho: niche, snapshots, avisos };
 }
 
+function formatoFrom(args: { formato?: string }): "pdf" | "html" | "json" {
+  if (args.formato === "html") return "html";
+  if (args.formato === "pdf") return "pdf";
+  return "json";
+}
+
+async function renderIntelPdfResponse(
+  html: string,
+  slug: string,
+  formato: "pdf" | "html",
+  avisos: string[]
+) {
+  const cleanSlug = slug
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+    .toLowerCase().slice(0, 60);
+  const stamp = new Date().toISOString().slice(0, 10);
+  const avisosSuffix = avisos.length ? `\n\nAvisos: ${avisos.join("; ")}` : "";
+
+  if (formato === "html") {
+    if (process.env.VERCEL) {
+      const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+      if (!blobToken) return toolError("Falta BLOB_READ_WRITE_TOKEN para armazenar o HTML.");
+      const { put } = await import("@vercel/blob");
+      const name = `${cleanSlug}-${stamp}.html`;
+      const result = await put(`relatorios/${name}`, html, {
+        access: "public", token: blobToken,
+        contentType: "text/html; charset=utf-8", addRandomSuffix: true,
+      });
+      return { content: [{ type: "text" as const, text: `HTML gerado:\n${result.url}${avisosSuffix}` }] };
+    }
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "reports");
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, `${cleanSlug}-${stamp}.html`);
+    writeFileSync(filePath, html, "utf8");
+    return { content: [{ type: "text" as const, text: `HTML gerado:\n${filePath}${avisosSuffix}` }] };
+  }
+
+  // PDF
+  const pdfLib = await import("../pdf.js");
+  if (process.env.VERCEL) {
+    const { pdf, pageCount } = await pdfLib.renderHtmlPdf(html);
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return toolError(
+        `PDF renderizado (${pageCount} pgs, ${Math.round(pdf.length / 1024)} KB), mas falta BLOB_READ_WRITE_TOKEN.`
+      );
+    }
+    const { put } = await import("@vercel/blob");
+    const result = await put(`relatorios/${cleanSlug}-${stamp}.pdf`, pdf, {
+      access: "public", token: blobToken, contentType: "application/pdf", addRandomSuffix: true,
+    });
+    return {
+      content: [{ type: "text" as const, text: `PDF gerado (${pageCount} pgs):\n${result.url}${avisosSuffix}` }],
+    };
+  }
+  const result = await pdfLib.saveHtmlPdf(html, cleanSlug);
+  const publicBase = process.env.PUBLIC_BASE_URL;
+  const where = publicBase
+    ? `${publicBase.replace(/\/$/, "")}/files/${basename(result.pdfPath)}`
+    : result.pdfPath;
+  return {
+    content: [{
+      type: "text" as const,
+      text: `PDF gerado (${result.pageCount} pgs):\n${where}${avisosSuffix}`,
+    }],
+  };
+}
+
 export function registerIntelligenceTools(server: McpServer, metaClient: MetaAdsClient): void {
   server.tool(
     "get_client_diagnosis",
@@ -161,12 +235,13 @@ export function registerIntelligenceTools(server: McpServer, metaClient: MetaAds
       try {
         const { cliente, periodo, nicho, snapshots, avisos } = await buildSnapshots(args as IntelArgs, metaClient);
         const result = buildDiagnosis({
-          cliente,
-          periodo,
-          nicho: nicho.label,
-          nicho_confianca: nicho.confidence,
-          snapshots,
+          cliente, periodo, nicho: nicho.label, nicho_confianca: nicho.confidence, snapshots,
         });
+        const fmt = formatoFrom(args as { formato?: string });
+        if (fmt !== "json") {
+          const html = renderDiagnosisHtml(result);
+          return renderIntelPdfResponse(html, `diagnostico-${cliente}`, fmt, avisos);
+        }
         return json(avisos.length ? { ...result, _avisos: avisos, _nicho_evidencia: nicho.evidence } : { ...result, _nicho_evidencia: nicho.evidence });
       } catch (e) {
         return toolError((e as Error).message);
@@ -182,6 +257,11 @@ export function registerIntelligenceTools(server: McpServer, metaClient: MetaAds
       try {
         const { cliente, periodo, nicho, snapshots, avisos } = await buildSnapshots(args as IntelArgs, metaClient);
         const result = buildAudit({ cliente, periodo, nicho: nicho.label, snapshots });
+        const fmt = formatoFrom(args as { formato?: string });
+        if (fmt !== "json") {
+          const html = renderAuditHtml(result);
+          return renderIntelPdfResponse(html, `auditoria-${cliente}`, fmt, avisos);
+        }
         return json(avisos.length ? { ...result, _avisos: avisos, _nicho_evidencia: nicho.evidence } : { ...result, _nicho_evidencia: nicho.evidence });
       } catch (e) {
         return toolError((e as Error).message);

@@ -270,6 +270,65 @@ export interface GeneratedPdf {
   pageCount: number;
 }
 
+/** Gera PDF a partir de HTML bruto em memória (serverless/Vercel). */
+export async function renderHtmlPdf(html: string): Promise<{ pdf: Buffer; pageCount: number }> {
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page
+      .evaluate(async () => {
+        await Promise.race([
+          (document as unknown as { fonts: { ready: Promise<unknown> } }).fonts.ready,
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
+      })
+      .catch(() => {});
+    await page
+      .waitForFunction("window.__READY__ === true", { timeout: 10000 })
+      .catch(() => {});
+    const pageCount = await page.evaluate(
+      () => document.querySelectorAll(".page").length || 1
+    );
+    const pdf = Buffer.from(await page.pdf(PDF_OPTS));
+    return { pdf, pageCount };
+  } finally {
+    await browser.close();
+  }
+}
+
+/** Salva HTML bruto em PDF + PNG de prévia em disco (uso local). */
+export async function saveHtmlPdf(html: string, clienteSlug: string): Promise<GeneratedPdf> {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const base = `relatorio-${slugify(clienteSlug)}-${stamp}`;
+  const dir = outputDir();
+  const pdfPath = join(dir, `${base}.pdf`);
+  const previewPath = join(dir, `${base}-preview.png`);
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 1 });
+    await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page
+      .evaluate(async () => {
+        await Promise.race([
+          (document as unknown as { fonts: { ready: Promise<unknown> } }).fonts.ready,
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
+      })
+      .catch(() => {});
+    const pageCount = await page.evaluate(
+      () => document.querySelectorAll(".page").length || 1
+    );
+    await page.pdf({ ...PDF_OPTS, path: pdfPath });
+    await page.screenshot({ path: previewPath, fullPage: true });
+    return { pdfPath, previewPath, pageCount };
+  } finally {
+    await browser.close();
+  }
+}
+
 /** Gera o PDF + PNG de prévia salvos em disco — usado localmente. */
 export async function generatePdf(
   data: PdfReportModel,
