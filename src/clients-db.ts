@@ -5,6 +5,15 @@ export interface ClientRecord {
   id_grupo_cliente: string;
   /** Texto livre opcional (nicho + sobre a empresa). Alimenta o benchmark por nicho. */
   contexto_cliente?: string;
+  /** Nome do campo como o webhook n8n envia hoje (alias de contexto_cliente). */
+  contexto?: string;
+  /** Nicho classificado pela IA do n8n (rótulo, ex.: "Farmácia"). Fonte preferida do benchmark. */
+  nicho?: string;
+}
+
+/** Lê o contexto do cliente aceitando os dois nomes de campo (contexto | contexto_cliente). */
+export function clientContexto(c?: ClientRecord): string | undefined {
+  return c?.contexto_cliente ?? c?.contexto;
 }
 
 let cache: ClientRecord[] | null = null;

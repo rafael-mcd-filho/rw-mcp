@@ -24,16 +24,16 @@ export const NICHE_LABELS: Record<BenchmarkNiche, string> = {
 // em `alimentacao_delivery` (CPL barato).
 const NICHE_KEYWORDS: Array<{ niche: BenchmarkNiche; terms: string[] }> = [
   { niche: "franquias", terms: ["franquia", "franqueadora", "franqueado", "franchising", "franchise"] },
-  { niche: "imoveis", terms: ["imovel", "imoveis", "imobiliaria", "corretor", "apartamento", "loteamento", "incorporadora", "construtora", "terreno"] },
+  { niche: "imoveis", terms: ["imovel", "imoveis", "imobiliaria", "corretor", "apartamento", "loteamento", "incorporadora", "construtora", "terreno", "sala comercial", "salas comerciais", "escritorio", "locacao", "empreendimento"] },
   { niche: "financeiro", terms: ["financeir", "credito", "emprestimo", "seguro", "investiment", "consorcio", "banco", "cartao de credito"] },
-  { niche: "saude_estetica", terms: ["clinica", "estetica", "odonto", "dentista", "dermato", "harmoniza", "botox", "saude", "fisio", "nutri", "medic", "procedimento facial", "depilacao", "capilar"] },
+  { niche: "saude_estetica", terms: ["clinica", "estetica", "odonto", "dentista", "dermato", "harmoniza", "botox", "saude", "fisio", "nutri", "medic", "procedimento facial", "depilacao", "capilar", "farmacia", "farmaceutic", "drogaria", "remedio", "medicament", "manipulacao", "suplement", "psicolog", "psiquiatr", "terapeuta", "cirurgi", "hospital"] },
   { niche: "infoprodutos", terms: ["infoproduto", "curso online", "mentoria", "ebook", "lancamento", "produto digital", "comunidade paga"] },
   { niche: "educacao", terms: ["escola", "faculdade", "ensino", "vestibular", "concurso", "curso preparatorio", "educacao", "idiomas", "pos-graduacao"] },
   { niche: "ecommerce_moda", terms: ["moda", "roupa", "vestuario", "calcad", "fashion", "semijoia", "semijoias", "acessorios", "bijuteria", "lingerie"] },
   { niche: "ecommerce_tech", terms: ["eletronico", "gadget", "informatica", "celular", "computador", "notebook", "smartphone", "tecnologia de consumo"] },
   { niche: "saas_b2b", terms: ["saas", "software", "b2b", "plataforma", "sistema", "aplicativo corporativo", "erp", "crm"] },
-  { niche: "alimentacao_delivery", terms: ["restaurante", "delivery", "lanchonete", "pizzaria", "hamburgu", "acai", "comida", "gastronom", "cafeteria", "food service", "food", "bar", "doceria", "padaria"] },
-  { niche: "servicos_locais", terms: ["servico", "lava jato", "oficina", "pet", "petshop", "salao", "barbearia", "academia", "advoga", "contabil", "manutencao", "reforma", "limpeza", "rastreament"] },
+  { niche: "alimentacao_delivery", terms: ["restaurante", "delivery", "lanchonete", "pizzaria", "hamburgu", "hamburgueria", "burgueria", "burger", "humbug", "lanche", "espetaria", "espeto", "acai", "comida", "gastronom", "cafeteria", "food service", "food", "doceria", "padaria", "sorveteria", "sorvet", "gelato", "supermercado", "mercearia", "acougue", "hortifruti", "vinho", "enoteca", "adega"] },
+  { niche: "servicos_locais", terms: ["servico", "lava jato", "automotiv", "estetica automotiva", "lavagem", "higieniza", "oficina", "pet", "petshop", "caes", "cachorro", "adestrament", "canino", "veterinari", "creche", "salao", "barbearia", "academia", "advoga", "contabil", "consultoria", "despachante", "manutencao", "reforma", "limpeza", "lavanderia", "pintura", "painting", "rastreament", "vidracaria", "vidro", "marcenaria", "moveis planejados", "planejados", "otica", "oculos", "lentes de contato", "lentes de grau", "lentes", "armacoes", "armacao", "joalheria", "relojoaria"] },
 ];
 
 function normalize(text: string): string {
@@ -74,4 +74,47 @@ export function normalizeNiche(contexto?: string): NicheResult {
     confidence,
     evidence: best.hits,
   };
+}
+
+// Mapeia o RÓTULO de nicho que a IA do n8n entrega (ex.: "Farmácia", "Ótica",
+// "Supermercado") para um balde de benchmark. Roda sobre um rótulo canônico e
+// curto — bem mais confiável que casar o texto livre. Ordem importa (saúde
+// antes de e-commerce; serviços locais como catch-all no fim).
+const LABEL_RULES: Array<{ slug: BenchmarkNiche; test: RegExp }> = [
+  { slug: "franquias", test: /franqui/ },
+  { slug: "imoveis", test: /corret|constru|imobil|imove|loteament|incorporad|empreendiment/ },
+  { slug: "financeiro", test: /financ|credito|seguro|consorci|emprestim|\bbanco/ },
+  { slug: "saude_estetica", test: /farmac|saude|odonto|psicolog|beleza|estetic|\bmedic|clinic|fisio|nutri|drogaria|dermat|cirurg|hospital|harmoniza|terapeut/ },
+  { slug: "infoprodutos", test: /infoprodut|curso online|mentoria|lancament|produto digital/ },
+  { slug: "educacao", test: /educac|escola|ensino|faculdad|vestibular|idiomas/ },
+  { slug: "ecommerce_moda", test: /moda|calcad|semijoi|\bjoia|vestuari|fashion|bijuteri|lingerie|acessori/ },
+  { slug: "ecommerce_tech", test: /eletronic|\btech|informatic|gadget|celular|computador|notebook/ },
+  { slug: "saas_b2b", test: /saas|software|\bb2b|sistema|plataforma|aplicativo/ },
+  { slug: "alimentacao_delivery", test: /aliment|restaurant|pizza|hamburg|burg|lanch|sorvet|gelato|padaria|doceria|cafeteri|vinho|enotec|adega|supermercad|mercearia|acougue|hortifruti|\bfood|gastronom|delivery|espeto/ },
+  { slug: "servicos_locais", test: /otica|optic|oculos|lente|\bpet|animai|animal|limpeza|automotiv|lavander|despachant|vidrac|pintur|interior|moveis|marcenaria|rastreament|consultoria|salao|barbear|academia|advoga|contabil|oficina|reforma|manutenc|servic|estetica automotiva|lava\s*jato/ },
+];
+
+const SLUGS = new Set(Object.keys(NICHE_LABELS) as BenchmarkNiche[]);
+
+/**
+ * Fonte de verdade do nicho. Prefere o campo `nicho` (classificado pela IA do
+ * n8n); cai para o casamento por palavra-chave no `contexto` só se faltar.
+ */
+export function resolveNiche(nicho?: string, contexto?: string): NicheResult {
+  const raw = (nicho ?? "").trim();
+  if (raw) {
+    const norm = normalize(raw).replace(/\s+/g, "_");
+    if (SLUGS.has(norm as BenchmarkNiche)) {
+      const slug = norm as BenchmarkNiche;
+      return { niche: slug, label: NICHE_LABELS[slug], confidence: "alta", evidence: ["nicho (n8n)"] };
+    }
+    const flat = normalize(raw);
+    for (const r of LABEL_RULES) {
+      if (r.test.test(flat)) {
+        return { niche: r.slug, label: NICHE_LABELS[r.slug], confidence: "alta", evidence: [`n8n: "${raw}"`] };
+      }
+    }
+  }
+  // Sem rótulo utilizável → fallback por palavra-chave no contexto livre.
+  return normalizeNiche(contexto);
 }

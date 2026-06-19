@@ -12,8 +12,8 @@ import {
   getGoogleAdsKeywords,
   getGoogleAdsSearchTerms,
 } from "../google-ads-api.js";
-import { findClient, clientsConfigured, type ClientRecord } from "../clients-db.js";
-import { normalizeNiche } from "../intelligence/niche.js";
+import { findClient, clientsConfigured, clientContexto, type ClientRecord } from "../clients-db.js";
+import { resolveNiche } from "../intelligence/niche.js";
 import { googleSnapshot, metaSnapshot } from "../intelligence/snapshot.js";
 import { buildDiagnosis } from "../intelligence/diagnosis.js";
 import { buildAudit } from "../intelligence/audit.js";
@@ -94,7 +94,7 @@ async function resolveClient(a: IntelArgs): Promise<{
   }
   const metaId = scalar(a.meta_account_id ?? a.id_conta_meta_ads) ?? record?.id_conta_meta_ads;
   const googleId = onlyDigits(a.google_customer_id ?? a.id_conta_google ?? record?.id_conta_google);
-  const contexto = scalar(a.contexto_cliente) ?? record?.contexto_cliente;
+  const contexto = scalar(a.contexto_cliente) ?? clientContexto(record);
   return {
     cliente: record?.nome_cliente ?? nome ?? "Cliente",
     metaId: metaId || undefined,
@@ -108,13 +108,11 @@ async function resolveClient(a: IntelArgs): Promise<{
 async function buildSnapshots(
   a: IntelArgs,
   metaClient: MetaAdsClient
-): Promise<{ cliente: string; periodo: string; nicho: ReturnType<typeof normalizeNiche>; snapshots: AccountSnapshot[]; avisos: string[] }> {
-  const { cliente, metaId, googleId, contexto } = await resolveClient(a);
+): Promise<{ cliente: string; periodo: string; nicho: ReturnType<typeof resolveNiche>; snapshots: AccountSnapshot[]; avisos: string[] }> {
+  const { cliente, metaId, googleId, contexto, record } = await resolveClient(a);
   const { since, until, preset, label, month } = periodOf(a);
-  const nicheForced = scalar(a.nicho);
-  const niche = nicheForced
-    ? { niche: nicheForced as ReturnType<typeof normalizeNiche>["niche"], label: nicheForced, confidence: "alta" as const, evidence: ["forçado"] }
-    : normalizeNiche(contexto);
+  // Preferência: nicho forçado no argumento → nicho da IA (n8n) → contexto livre.
+  const niche = resolveNiche(scalar(a.nicho) ?? record?.nicho, contexto);
 
   const wantsMeta = (a.incluir_meta ?? true) && !!metaId;
   const wantsGoogle = (a.incluir_google ?? true) && !!googleId && googleAdsConfigured();

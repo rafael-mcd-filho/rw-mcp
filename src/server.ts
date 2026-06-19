@@ -35,9 +35,9 @@ import {
   type IntegratedReport,
   type MetaAccountReportLike,
 } from "./google-report.js";
-import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
+import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
-import { normalizeNiche } from "./intelligence/niche.js";
+import { resolveNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -1210,7 +1210,7 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
             : Promise.resolve([]),
           fetchGoogleDetails(googleCustomerId, since, until, datePreset, args),
         ]);
-        const niche = normalizeNiche(record?.contexto_cliente).niche;
+        const niche = resolveNiche(record?.nicho, clientContexto(record)).niche;
         const month = until ? Number(until.slice(5, 7)) || undefined : undefined;
         googleReport = buildGoogleAdsReport(rawGoogle, { clientName, ...details, niche, month });
         if (includeDaily) googleDaily = dailyRows;
