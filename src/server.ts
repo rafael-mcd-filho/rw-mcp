@@ -41,6 +41,7 @@ import { renderGoogleReportHtml } from "./google-pdf.js";
 import {
   processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
 } from "./meta-pdf.js";
+import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
@@ -1019,6 +1020,19 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         funil,
       });
       return renderHtmlPdfToolResponse(html, cliente, formato);
+    }
+  );
+
+  // ─── Relatório CPL Beco Mágico (todas as unidades, junho 2026) ───────────────
+
+  server.tool(
+    "generate_beco_magico_cpl_report",
+    "Gera relatório de CPL e estimativa de investimento das 5 unidades do Beco Mágico (Natal, João Pessoa, Recife, Manaus e Goiânia) para junho de 2026, com projeção de investimento para faturar R$120k por unidade considerando escala de +35% no CPL. formato='pdf' (padrão) ou 'html'.",
+    { ...FORMATO_SCHEMA },
+    async (args) => {
+      const formato = (args.formato ?? args.format ?? "pdf") as "pdf" | "html";
+      const html = renderBecoCplHtml();
+      return renderHtmlPdfToolResponse(html, "beco-magico-cpl-junho-2026", formato);
     }
   );
 
