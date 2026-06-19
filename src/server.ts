@@ -38,6 +38,10 @@ import {
   type MetaAccountReportLike,
 } from "./google-report.js";
 import { renderGoogleReportHtml } from "./google-pdf.js";
+import {
+  processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
+} from "./meta-pdf.js";
+import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
 import { resolveNiche } from "./intelligence/niche.js";
@@ -931,15 +935,14 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
   server.tool(
     "generate_report_pdf",
-    `Gera um relatório da conta em PDF com layout A4 paginado, resumo executivo e leitura por objetivo.
-Local: salva o PDF + prévia PNG em disco. No Vercel: gera em memória e devolve uma URL de download (Vercel Blob).
-Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
+    `Gera relatório Meta Ads em PDF com 4 páginas: resumo + funil, conjuntos de anúncio, anúncios e demográficos (gênero/idade). formato='pdf' (padrão) ou 'html'.`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
       ...CLIENT_NAME_SCHEMA,
       ...DATE_PRESET_SCHEMA,
       ...COMMON_COMPAT_SCHEMA,
       ...ACCOUNT_ID_SCHEMA,
+      ...FORMATO_SCHEMA,
     },
     async (args) => {
       const { since, until } = periodFrom(args);
@@ -947,12 +950,13 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       const periodUntil = requireValue(until, "until");
       const account_id = accountIdFrom(args);
       const client_name = clientNameFrom(args);
+      const formato = formatoFrom(args);
 
-      const [accountRows, dailyRows] = await Promise.all([
+      const [accountRows, adsetRows, adRows, demoRows] = await Promise.all([
         client.getInsights({ level: "campaign", since: periodSince, until: periodUntil, accountId: account_id }),
-        client.getInsights({
-          level: "campaign", since: periodSince, until: periodUntil, timeIncrement: 1, accountId: account_id,
-        }),
+        client.getInsights({ level: "adset", since: periodSince, until: periodUntil, accountId: account_id }).catch(() => []),
+        client.getInsights({ level: "ad", since: periodSince, until: periodUntil, accountId: account_id }).catch(() => []),
+        client.getInsights({ level: "account", since: periodSince, until: periodUntil, accountId: account_id, breakdowns: ["gender", "age"] }).catch(() => []),
       ]);
 
       let cliente = client_name;
@@ -961,64 +965,60 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
         cliente = (acc.name as string) ?? "Relatório Meta Ads";
       }
 
-      const model = buildPdfModel(cliente, `${periodSince} a ${periodUntil}`, accountRows, dailyRows);
-      const pdf = await import("./pdf.js");
-      const slug = cliente
-        .normalize("NFD").replace(/[̀-ͯ]/g, "")
-        .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
-        .toLowerCase().slice(0, 60);
+      const periodo = `${periodSince} a ${periodUntil}`;
+      const accountReport = buildAccountReport(accountRows, periodo);
+      const adsets = processMetaAdsets(adsetRows);
+      const ads = processMetaAds(adRows);
+      const demographics = processMetaDemographics(demoRows);
+      const funil = buildMetaFunil(adsets, accountRows);
 
-      // Serverless (Vercel): gera em memória e entrega por URL (Vercel Blob).
-      if (process.env.VERCEL) {
-        const { pdf: buffer, pageCount } = await pdf.renderReportPdf(model);
-        const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-        if (!blobToken) {
-          return toolError(
-            `PDF renderizado (${pageCount} páginas, ${Math.round(buffer.length / 1024)} KB), ` +
-              "mas falta armazenamento. Crie um Vercel Blob Store e defina BLOB_READ_WRITE_TOKEN para receber o link."
-          );
-        }
-        const { put } = await import("@vercel/blob");
-        const stamp = new Date().toISOString().slice(0, 10);
-        const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
-          access: "public",
-          token: blobToken,
-          contentType: "application/pdf",
-          addRandomSuffix: true,
-        });
-        return {
-          content: [
-            { type: "text", text: `PDF gerado (${pageCount} páginas):\n${result.url}` },
-          ],
-        };
+      // Totais da conta
+      let totalImp = 0, totalReach = 0, totalCliques = 0, totalFreqWeight = 0;
+      const toI = (v: unknown) => parseInt(String(v ?? "0"), 10) || 0;
+      const toN = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
+      for (const r of accountRows) {
+        totalImp += toI(r.impressions);
+        totalReach += toI(r.reach ?? "0");
+        totalCliques += toI(r.clicks);
+        totalFreqWeight += toN(r.frequency ?? "0") * toI(r.reach ?? "0");
       }
+      const avgCTR = totalImp > 0 ? (totalCliques / totalImp) * 100 : 0;
+      const avgCPM = totalImp > 0 ? (accountReport.totais.gasto / totalImp) * 1000 : 0;
+      const avgFrequency = totalReach > 0 ? totalFreqWeight / totalReach : 0;
 
-      // Local / VPS: salva em disco + prévia PNG.
-      const result = await pdf.generatePdf(model, cliente);
+      const leitura = [
+        `Investimento total: ${moneyBR(accountReport.totais.gasto)} em ${accountReport.campanhas.filter(c => c.gasto > 0).length} campanhas ativas.`,
+        ...accountReport.campanhas.slice(0, 3).map(c =>
+          `${c.nome}: ${moneyBR(c.gasto)} · ${intBR(c.resultado)} ${c.headlineLabel.toLowerCase()} · ${c.resultado > 0 ? moneyBR(c.custo) : "sem conversões"}.`
+        ),
+      ];
 
-      // Na VPS (PUBLIC_BASE_URL setado), devolve um link servido pelo próprio
-      // servidor (/files) em vez do caminho de disco.
-      const publicBase = process.env.PUBLIC_BASE_URL;
-      if (publicBase) {
-        const fileUrl = `${publicBase.replace(/\/$/, "")}/files/${basename(result.pdfPath)}`;
-        return {
-          content: [
-            { type: "text", text: `PDF gerado (${result.pageCount} páginas):\n${fileUrl}` },
-          ],
-        };
-      }
+      const proximosPassos = [
+        `Revisar conjuntos com CPM acima de R$ 15 — pode indicar saturação de audiência.`,
+        `Anúncios com frequência acima de 3,0 devem ser rotacionados ou pausados.`,
+        `Confirmar no CRM se os resultados registrados na plataforma geram receita real.`,
+      ];
 
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              `PDF gerado com sucesso:\n${result.pdfPath}\n\n` +
-              `Prévia PNG:\n${result.previewPath}\n\n` +
-              `Páginas: ${result.pageCount}`,
-          },
-        ],
-      };
+      const notas = [
+        "Resultados (leads, conversas, compras) são os eventos configurados nas campanhas — valide com o CRM.",
+        "Cliques no link = inline_link_clicks, que exclui cliques no perfil e outras interações.",
+        "Dados demográficos são estimados pela Meta com base em comportamento e perfil — não são exatos.",
+      ];
+
+      const html = renderMetaReportHtml({
+        cliente,
+        periodo,
+        campanhas: accountReport.campanhas,
+        totais: { gasto: accountReport.totais.gasto, totalImpressions: totalImp, totalReach, totalCliques, avgCTR, avgCPM, avgFrequency },
+        leitura,
+        proximosPassos,
+        notas,
+        adsets,
+        ads,
+        demographics,
+        funil,
+      });
+      return renderHtmlPdfToolResponse(html, cliente, formato);
     }
   );
 

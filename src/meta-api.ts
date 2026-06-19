@@ -16,6 +16,7 @@ export const INSIGHTS_FIELDS =
     "spend",
     "impressions",
     "clicks",
+    "inline_link_clicks",
     "cpc",
     "cpm",
     "cpp",
@@ -116,6 +117,7 @@ export interface Insight {
   spend: string;
   impressions: string;
   clicks: string;
+  inline_link_clicks?: string;
   cpc?: string;
   cpm?: string;
   cpp?: string;
@@ -123,6 +125,10 @@ export interface Insight {
   objective?: string;
   reach?: string;
   frequency?: string;
+  /** Preenchido quando a chamada usa breakdowns: ["gender"] */
+  gender?: string;
+  /** Preenchido quando a chamada usa breakdowns: ["age"] */
+  age?: string;
   actions?: MetaActionMetric[];
   cost_per_action_type?: MetaActionMetric[];
   action_values?: MetaActionMetric[];
