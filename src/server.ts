@@ -36,6 +36,8 @@ import {
   type MetaAccountReportLike,
 } from "./google-report.js";
 import { clientsConfigured, findClient, loadClients } from "./clients-db.js";
+import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
+import { normalizeNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
   "ID da conta de anúncios (com ou sem 'act_'). Se omitido, usa a conta padrão configurada no servidor.";
@@ -448,12 +450,56 @@ function periodLabelFrom(since?: string, until?: string, preset?: string): strin
   return since && until ? `${since} a ${until}` : preset ?? "ultimos 30 dias";
 }
 
-async function renderPdfToolResponse(model: PdfReportModel, clientName: string) {
-  const pdf = await import("./pdf.js");
+const FORMATO_SCHEMA = {
+  formato: z.enum(["pdf", "html"]).optional().describe("Formato de saída: 'pdf' (entrega ao cliente, padrão) ou 'html' (dashboard navegável para análise na tela)."),
+  format: z.enum(["pdf", "html"]).optional().describe("Alias de formato."),
+};
+
+function formatoFrom(args: { formato?: string; format?: string }): "pdf" | "html" {
+  return (args.formato ?? args.format) === "html" ? "html" : "pdf";
+}
+
+async function renderPdfToolResponse(
+  model: PdfReportModel,
+  clientName: string,
+  formato: "pdf" | "html" = "pdf"
+) {
   const slug = clientName
     .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "")
     .toLowerCase().slice(0, 60);
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (formato === "html") {
+    const { renderReportHtml } = await import("./html-report.js");
+    const html = renderReportHtml(model);
+    const name = `relatorio-${slug}-${stamp}.html`;
+    if (process.env.VERCEL) {
+      const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+      if (!blobToken) {
+        return toolError("Relat\u00f3rio HTML gerado, mas falta armazenamento. Defina BLOB_READ_WRITE_TOKEN para receber o link.");
+      }
+      const { put } = await import("@vercel/blob");
+      const result = await put(`relatorios/${name}`, html, {
+        access: "public",
+        token: blobToken,
+        contentType: "text/html; charset=utf-8",
+        addRandomSuffix: true,
+      });
+      return { content: [{ type: "text" as const, text: `Relat\u00f3rio HTML gerado:\n${result.url}` }] };
+    }
+    const { writeFileSync, mkdirSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dir = join(process.cwd(), "reports");
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, name);
+    writeFileSync(filePath, html, "utf8");
+    const publicBase = process.env.PUBLIC_BASE_URL;
+    const where = publicBase ? `${publicBase.replace(/\/$/, "")}/files/${name}` : filePath;
+    return { content: [{ type: "text" as const, text: `Relat\u00f3rio HTML gerado:\n${where}` }] };
+  }
+
+  const pdf = await import("./pdf.js");
 
   if (process.env.VERCEL) {
     const { pdf: buffer, pageCount } = await pdf.renderReportPdf(model);
@@ -465,7 +511,6 @@ async function renderPdfToolResponse(model: PdfReportModel, clientName: string) 
       );
     }
     const { put } = await import("@vercel/blob");
-    const stamp = new Date().toISOString().slice(0, 10);
     const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
       access: "public",
       token: blobToken,
@@ -1027,9 +1072,9 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       keywords: z.boolean().optional().describe("Alias de incluir_keywords."),
       incluir_termos_pesquisa: z.boolean().optional().describe("Inclui termos de pesquisa reais. Padrao: true."),
       termos_pesquisa: z.boolean().optional().describe("Alias de incluir_termos_pesquisa."),
-      limit_keywords: z.number().optional().describe("Limite de keywords analisadas. Padrao: 10."),
-      limit_search_terms: z.number().optional().describe("Limite de termos de pesquisa. Padrao: 10."),
-      limit_termos_pesquisa: z.number().optional().describe("Alias de limit_search_terms."),
+      limit_keywords: z.number().int().min(1).max(200).optional().describe("Limite de keywords analisadas (1–200). Padrao: 10."),
+      limit_search_terms: z.number().int().min(1).max(200).optional().describe("Limite de termos de pesquisa (1–200). Padrao: 10."),
+      limit_termos_pesquisa: z.number().int().min(1).max(200).optional().describe("Alias de limit_search_terms."),
       ...OPTIONAL_PERIOD_SCHEMA,
       ...DATE_PRESET_SCHEMA,
       ...COMMON_COMPAT_SCHEMA,
@@ -1040,9 +1085,9 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
       keywords: z.boolean().optional().describe("Alias de incluir_keywords."),
       incluir_termos_pesquisa: z.boolean().optional().describe("Inclui termos de pesquisa reais. Padrao: true."),
       termos_pesquisa: z.boolean().optional().describe("Alias de incluir_termos_pesquisa."),
-      limit_keywords: z.number().optional().describe("Limite de keywords analisadas. Padrao: 10."),
-      limit_search_terms: z.number().optional().describe("Limite de termos de pesquisa. Padrao: 10."),
-      limit_termos_pesquisa: z.number().optional().describe("Alias de limit_search_terms."),
+      limit_keywords: z.number().int().min(1).max(200).optional().describe("Limite de keywords analisadas (1–200). Padrao: 10."),
+      limit_search_terms: z.number().int().min(1).max(200).optional().describe("Limite de termos de pesquisa (1–200). Padrao: 10."),
+      limit_termos_pesquisa: z.number().int().min(1).max(200).optional().describe("Alias de limit_search_terms."),
     };
 
     type GoogleDetailsArgs = {
@@ -1165,7 +1210,9 @@ Use quando o usuário pedir "relatório em PDF" de uma conta/cliente.`,
             : Promise.resolve([]),
           fetchGoogleDetails(googleCustomerId, since, until, datePreset, args),
         ]);
-        googleReport = buildGoogleAdsReport(rawGoogle, { clientName, ...details });
+        const niche = normalizeNiche(record?.contexto_cliente).niche;
+        const month = until ? Number(until.slice(5, 7)) || undefined : undefined;
+        googleReport = buildGoogleAdsReport(rawGoogle, { clientName, ...details, niche, month });
         if (includeDaily) googleDaily = dailyRows;
       }
 
@@ -1314,13 +1361,14 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
 
     server.tool(
       "generate_google_report_pdf",
-      "Gera PDF executivo de Google Ads com resumo, campanhas, leitura e proximos passos.",
+      "Gera relatório de Google Ads com resumo, campanhas, leitura e proximos passos. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
       {
         ...GADS_CUSTOMER_SCHEMA,
         ...OPTIONAL_PERIOD_SCHEMA,
         ...DATE_PRESET_SCHEMA,
         ...CLIENT_NAME_SCHEMA,
         ...GOOGLE_DETAILS_SCHEMA,
+        ...FORMATO_SCHEMA,
         ...COMMON_COMPAT_SCHEMA,
       },
       async (args) => {
@@ -1334,7 +1382,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         ]);
         const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
         const model = buildGooglePdfModel(report, dailyRows);
-        return renderPdfToolResponse(model, report.cliente ?? `Google Ads ${cid}`);
+        return renderPdfToolResponse(model, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args));
       }
     );
 
@@ -1374,8 +1422,8 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
 
     server.tool(
       "generate_integrated_report_pdf",
-      "Gera PDF integrado com Meta Ads e Google Ads, mantendo resultados separados por canal e notas metodologicas.",
-      INTEGRATED_SCHEMA,
+      "Gera relatório integrado com Meta Ads e Google Ads, resultados separados por canal. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
+      { ...INTEGRATED_SCHEMA, ...FORMATO_SCHEMA },
       async (args) => {
         const payload = await buildIntegratedPayload(args as IntegratedArgs, true);
         const model = buildIntegratedPdfModel({
@@ -1383,7 +1431,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           metaDaily: payload.metaDaily,
           googleDaily: payload.googleDaily,
         });
-        return renderPdfToolResponse(model, payload.report.cliente);
+        return renderPdfToolResponse(model, payload.report.cliente, formatoFrom(args as { formato?: string; format?: string }));
       }
     );
 
@@ -1524,7 +1572,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         ...GADS_CUSTOMER_SCHEMA,
         ...OPTIONAL_PERIOD_SCHEMA,
         ...DATE_PRESET_SCHEMA,
-        limit: z.number().optional().describe("Máximo de keywords retornadas. Padrão: 50."),
+        limit: z.number().int().min(1).max(100).optional().describe("Máximo de keywords retornadas (1–100). Padrão: 50."),
         ...COMMON_COMPAT_SCHEMA,
       },
       async (args) => {
@@ -1620,6 +1668,9 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
       }
     );
   }
+
+  // Camada de inteligência (diagnóstico + auditoria) — registrada à parte.
+  registerIntelligenceTools(server, client);
 
   return server;
 }

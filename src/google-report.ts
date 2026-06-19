@@ -11,6 +11,8 @@ import type {
   PdfReportModel,
 } from "./report.js";
 import { round2, moneyBR, intBR, pctBR, dateBR, sortKeyFromBR } from "./format.js";
+import { classifyMetric } from "./intelligence/benchmarks.js";
+import type { BenchmarkNiche, BenchmarkResult } from "./intelligence/types.js";
 
 function fmtDeltaPercent(value: number | null): string {
   if (value == null) return "novo";
@@ -60,6 +62,10 @@ export interface GoogleReportOptions {
   clientName?: string;
   keywords?: GKeyword[];
   searchTerms?: GSearchTerm[];
+  /** Nicho do benchmark; quando presente, classifica os KPIs do resumo. */
+  niche?: BenchmarkNiche;
+  /** Mês (1-12) para a sazonalidade; default = mês atual. */
+  month?: number;
 }
 
 export interface GoogleAdsEnhancedReport extends GAccountReport {
@@ -70,7 +76,19 @@ export interface GoogleAdsEnhancedReport extends GAccountReport {
   notas_metodologicas: string[];
   keywords?: GKeyword[];
   termos_pesquisa?: GSearchTerm[];
+  analise_benchmark?: BenchmarkResult[];
   mensagem: string;
+}
+
+/** Classifica os KPIs do resumo de uma conta Google contra o benchmark do nicho. */
+function classifyGoogleKpis(report: GAccountReport, niche: BenchmarkNiche, month: number): BenchmarkResult[] {
+  const ctx = { platform: "google" as const, objective: "default", niche, month };
+  const out: BenchmarkResult[] = [];
+  const push = (r?: BenchmarkResult) => { if (r) out.push(r); };
+  push(classifyMetric("ctr", report.resumo.ctr, ctx));
+  push(classifyMetric("cpc", report.resumo.cpc_medio, ctx));
+  if (report.resumo.conversoes > 0) push(classifyMetric("cpl", report.resumo.custo_por_conversao, ctx));
+  return out;
 }
 
 export interface MetricComparison {
@@ -286,6 +304,10 @@ function buildGoogleMessage(report: GoogleAdsEnhancedReport): string {
     }
   }
 
+  if (report.analise_benchmark?.length) {
+    lines.push("", "*Benchmark*", report.analise_benchmark.map((b) => `${b.label}: ${b.level}`).join(" · "));
+  }
+
   lines.push("", "*Leitura*", ...report.leitura_executiva.map((line) => `- ${line}`));
   lines.push("", "*Próximos passos*", ...report.oportunidades.map((line) => `- ${line}`));
 
@@ -309,6 +331,9 @@ export function buildGoogleAdsReport(
     ],
     keywords: options.keywords?.slice(0, 10),
     termos_pesquisa: options.searchTerms?.slice(0, 10),
+    analise_benchmark: options.niche
+      ? classifyGoogleKpis(report, options.niche, options.month ?? new Date().getMonth() + 1)
+      : undefined,
     mensagem: "",
   };
   return { ...base, mensagem: buildGoogleMessage(base) };

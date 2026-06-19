@@ -3,6 +3,8 @@ export interface ClientRecord {
   id_conta_meta_ads: string;
   id_conta_google: string;
   id_grupo_cliente: string;
+  /** Texto livre opcional (nicho + sobre a empresa). Alimenta o benchmark por nicho. */
+  contexto_cliente?: string;
 }
 
 let cache: ClientRecord[] | null = null;
