@@ -37,7 +37,7 @@ import {
   type IntegratedReport,
   type MetaAccountReportLike,
 } from "./google-report.js";
-import { renderGoogleReportHtml } from "./google-pdf.js";
+import { renderGoogleReportHtml, type GoogleReportComparison } from "./google-pdf.js";
 import {
   processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
 } from "./meta-pdf.js";
@@ -452,6 +452,35 @@ function comparePeriodFrom(args: ComparePeriodArgs): { since?: string; until?: s
     since: args.compare_since ?? args.compare_start_date ?? args.previous_since,
     until: args.compare_until ?? args.compare_end_date ?? args.previous_until,
   };
+}
+
+/**
+ * Período anterior "smart" para comparação padrão: se o período é um mês de
+ * calendário cheio, compara com o mês anterior completo; senão, com um bloco do
+ * mesmo tamanho imediatamente anterior. Retorna null se não houver datas concretas.
+ */
+function smartPreviousPeriod(since?: string, until?: string): { since: string; until: string } | null {
+  if (!since || !until) return null;
+  const s = new Date(`${since}T00:00:00Z`);
+  const u = new Date(`${until}T00:00:00Z`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(u.getTime()) || u < s) return null;
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const lastDay = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const fullMonth =
+    s.getUTCDate() === 1 &&
+    s.getUTCFullYear() === u.getUTCFullYear() &&
+    s.getUTCMonth() === u.getUTCMonth() &&
+    u.getUTCDate() === lastDay(u.getUTCFullYear(), u.getUTCMonth());
+  if (fullMonth) {
+    const py = s.getUTCMonth() === 0 ? s.getUTCFullYear() - 1 : s.getUTCFullYear();
+    const pm = s.getUTCMonth() === 0 ? 11 : s.getUTCMonth() - 1;
+    return { since: iso(new Date(Date.UTC(py, pm, 1))), until: iso(new Date(Date.UTC(py, pm, lastDay(py, pm)))) };
+  }
+  const dayMs = 86400000;
+  const days = Math.round((u.getTime() - s.getTime()) / dayMs) + 1;
+  const pu = new Date(s.getTime() - dayMs);
+  const ps = new Date(pu.getTime() - (days - 1) * dayMs);
+  return { since: iso(ps), until: iso(pu) };
 }
 
 function periodLabelFrom(since?: string, until?: string, preset?: string): string {
@@ -1451,6 +1480,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         ...GOOGLE_DETAILS_SCHEMA,
         ...FORMATO_SCHEMA,
         ...COMMON_COMPAT_SCHEMA,
+        comparar: z.boolean().optional().describe("Compara com o período anterior (padrão: true). Passe false para não comparar."),
       },
       async (args) => {
         const { since, until } = periodFrom(args);
@@ -1465,7 +1495,33 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           getGoogleAdsDemographics(cid, since, until, datePreset).catch(() => ({ por_genero: [], por_faixa_etaria: [] })),
         ]);
         const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
-        const html = renderGoogleReportHtml(report, { adGroups, conversionActions: convActions, demographics, dailyRows });
+
+        // Comparação com o período anterior (padrão; opt-out comparar:false).
+        let comparacao: GoogleReportComparison | undefined;
+        const prev = (args as { comparar?: boolean }).comparar !== false
+          ? smartPreviousPeriod(since, until)
+          : null;
+        if (prev) {
+          try {
+            const prevReport = await getGoogleAdsAccountReport(cid, prev.since, prev.until);
+            const pr = prevReport.resumo;
+            if (pr.gasto_total > 0 || pr.impressoes > 0) {
+              const cr = rawReport.resumo;
+              const delta = (a: number, b: number) => ({ atual: a, anterior: b, pct: b > 0 ? ((a - b) / b) * 100 : null });
+              comparacao = {
+                periodo_anterior: `${prev.since} a ${prev.until}`,
+                gasto: delta(cr.gasto_total, pr.gasto_total),
+                conversoes: delta(cr.conversoes, pr.conversoes),
+                cpa: delta(cr.custo_por_conversao, pr.custo_por_conversao),
+                ctr: delta(cr.ctr, pr.ctr),
+              };
+            }
+          } catch {
+            // sem comparação se o período anterior falhar
+          }
+        }
+
+        const html = renderGoogleReportHtml(report, { adGroups, conversionActions: convActions, demographics, dailyRows, comparacao });
         return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args));
       }
     );

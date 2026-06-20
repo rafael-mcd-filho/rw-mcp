@@ -145,7 +145,26 @@ function qsPill(qs: number | null): string {
 
 // ─── Página 1: Resumo + Campanhas ─────────────────────────────────────────────
 
-function page1(report: GoogleAdsEnhancedReport): string {
+function deltaChip(pct: number | null, dir: "higher" | "lower" | "neutral"): string {
+  if (pct == null) return `<span style="color:#9ca3af;font-weight:700">novo</span>`;
+  const rounded = Math.round(pct);
+  if (rounded === 0) return `<span style="color:#6b7280;font-weight:700">→ 0%</span>`;
+  const up = pct > 0;
+  let color = "#6b7280";
+  if (dir !== "neutral") color = (dir === "lower" ? !up : up) ? "#16a34a" : "#dc2626";
+  return `<span style="color:${color};font-weight:700">${up ? "↑" : "↓"} ${Math.abs(rounded)}%</span>`;
+}
+
+function renderExecSummary(report: GoogleAdsEnhancedReport, c?: GoogleReportComparison): string {
+  const r = report.resumo;
+  const base = `<strong>Resumo do período:</strong> ${money(r.gasto_total)} · ${int(r.conversoes)} conversões${r.conversoes > 0 ? ` · CPA ${money(r.custo_por_conversao)}` : ""}`;
+  const vs = c
+    ? `<div style="margin-top:4px;font-size:10.3px;color:#5f6673">vs período anterior (${esc(c.periodo_anterior)}): conversões ${deltaChip(c.conversoes.pct, "higher")} · CPA ${deltaChip(c.cpa.pct, "lower")} · CTR ${deltaChip(c.ctr.pct, "higher")} · investimento ${deltaChip(c.gasto.pct, "neutral")}</div>`
+    : "";
+  return `<div style="margin:12px 0 2px;padding:10px 13px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:11px;color:#303641;line-height:1.45">${base}${vs}</div>`;
+}
+
+function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportComparison): string {
   const r = report.resumo;
   const nicho = (report.analise_benchmark?.length
     ? report.analise_benchmark.map((b) => `${b.label}: ${b.level}`).join(" · ")
@@ -207,6 +226,7 @@ function page1(report: GoogleAdsEnhancedReport): string {
 
   return `<div class="page compact-page">
     ${header(report.cliente ?? "Cliente", report.periodo, "Relatório Google Ads")}
+    ${renderExecSummary(report, comparacao)}
     ${kpiHtml}
     ${benchRow}
     ${leitura}
@@ -429,11 +449,20 @@ function page3(
 
 // ─── API pública ──────────────────────────────────────────────────────────────
 
+export interface GoogleReportComparison {
+  periodo_anterior: string;
+  gasto: { atual: number; anterior: number; pct: number | null };
+  conversoes: { atual: number; anterior: number; pct: number | null };
+  cpa: { atual: number; anterior: number; pct: number | null };
+  ctr: { atual: number; anterior: number; pct: number | null };
+}
+
 export interface GooglePdfOptions {
   adGroups?: GAdGroup[];
   conversionActions?: GConversionAction[];
   demographics?: GDemographics;
   dailyRows?: GDayData[];
+  comparacao?: GoogleReportComparison;
 }
 
 export function renderGoogleReportHtml(
@@ -444,7 +473,7 @@ export function renderGoogleReportHtml(
   const convActions = opts.conversionActions ?? [];
   const demographics = opts.demographics ?? { por_genero: [], por_faixa_etaria: [] };
 
-  const p1 = page1(report);
+  const p1 = page1(report, opts.comparacao);
   const p2 = page2(report, adGroups);
   const p3 = page3(report, convActions, demographics);
 
