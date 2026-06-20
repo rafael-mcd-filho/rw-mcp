@@ -535,6 +535,78 @@ export async function getGoogleAdsAdGroups(
   }));
 }
 
+// ─── Anúncios (ad_group_ad) ──────────────────────────────────────────────────
+
+export interface GAd {
+  id: string;
+  nome: string;
+  status: string;
+  grupo: string; // grupo de anúncios (parent)
+  gasto: number;
+  impressoes: number;
+  cliques: number;
+  conversoes: number;
+  ctr: number;
+  cpc_medio: number;
+  custo_por_conversao: number;
+}
+
+export async function getGoogleAdsAds(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GAd[]> {
+  const where = dateClause(since, until, preset);
+
+  const rows = await gaqlSearch<{
+    adGroupAd: { ad: { id: string; name?: string }; status: string };
+    adGroup: { name: string };
+    metrics: {
+      costMicros: string;
+      impressions: string;
+      clicks: string;
+      conversions: string;
+      ctr: string;
+      averageCpc: string;
+      costPerConversion: string;
+    };
+  }>(customerId, `
+    SELECT
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.name,
+      ad_group_ad.status,
+      ad_group.name,
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.cost_per_conversion
+    FROM ad_group_ad
+    WHERE ${where}
+      AND campaign.status != 'REMOVED'
+      AND ad_group.status != 'REMOVED'
+      AND ad_group_ad.status != 'REMOVED'
+    ORDER BY metrics.cost_micros DESC
+  `);
+
+  return rows.map(r => ({
+    id: r.adGroupAd?.ad?.id ?? "",
+    nome: r.adGroupAd?.ad?.name?.trim() || `Anúncio #${r.adGroupAd?.ad?.id ?? "?"}`,
+    status: r.adGroupAd?.status ?? "",
+    grupo: r.adGroup?.name ?? "",
+    gasto: micros(r.metrics?.costMicros ?? "0"),
+    impressoes: safeInt(r.metrics?.impressions),
+    cliques: safeInt(r.metrics?.clicks),
+    conversoes: r2(safeFloat(r.metrics?.conversions)),
+    ctr: r2(safeFloat(r.metrics?.ctr) * 100),
+    cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
+    custo_por_conversao: micros(r.metrics?.costPerConversion ?? "0"),
+  }));
+}
+
 // ─── Hourly Breakdown ────────────────────────────────────────────────────────
 
 export interface GHourData {

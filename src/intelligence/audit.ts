@@ -5,7 +5,8 @@ import { runQualityGates, totalWaste, type AccountSnapshot, type GateCampaign } 
 import { computeHealthScore, GRADE_MEANING } from "./health-score.js";
 import { prioritizeAlerts, alertLine } from "./alerts.js";
 import { classifyKpis } from "./diagnosis.js";
-import type { Alert, BenchmarkResult, Channel, Platform } from "./types.js";
+import { analyzeLayer, type LayerAnalysis, type LayerKind } from "./layers.js";
+import type { Alert, BenchmarkResult, Channel, ClassifyContext, Platform } from "./types.js";
 
 type Verdict = "MANTER" | "OTIMIZAR" | "PAUSAR" | "SEM_ENTREGA";
 
@@ -21,26 +22,34 @@ export interface CampaignVerdict {
 export interface ChannelAudit {
   channel: Channel;
   platform: Platform;
+  gasto: number;
+  conversoes: number;
   score: number;
   grade: "A" | "B" | "C" | "D" | "F";
   grade_significado: string;
   kpis: BenchmarkResult[];
   campanhas: CampaignVerdict[];
   alertas: Alert[];
+  layers: LayerAnalysis[];
+  desperdicio_estimado: number;
   checks_insuficientes: string[];
 }
 
-export interface AuditResult {
-  tipo: "auditoria";
+export interface AnalysisResult {
+  tipo: "analise";
   cliente: string;
   periodo: string;
   nicho: string;
+  nicho_confianca: "alta" | "media" | "baixa";
   canais: ChannelAudit[];
   desperdicio_por_categoria: Record<string, number>;
   desperdicio_estimado: number;
   plano_de_acao: { urgente: string[]; esta_semana: string[]; este_mes: string[] };
   mensagem: string;
 }
+
+/** @deprecated diagnóstico e auditoria foram unificados — use AnalysisResult. */
+export type AuditResult = AnalysisResult;
 
 const round2 = (n: number): number => Math.round((Number(n) || 0) * 100) / 100;
 const moneyBR = (n: number): string =>
@@ -93,27 +102,50 @@ function auditChannel(s: AccountSnapshot): ChannelAudit {
   const campanhas = [...s.campanhas]
     .sort((a, b) => b.gasto - a.gasto)
     .map((c) => judgeCampaign(c, s.resumo.gasto, ref));
+  const alertas = prioritizeAlerts(alerts);
+
+  // Análise por camada — mesma régua de benchmark aplicada por entidade.
+  const ctx: ClassifyContext = { platform: s.platform, objective: s.objective, niche: s.niche, month: s.month };
+  const layers: LayerAnalysis[] = [];
+  const addLayer = (ents: GateCampaign[] | undefined, kind: LayerKind, label: string) => {
+    const a = analyzeLayer(ents, kind, label, ctx, s.resumo.gasto);
+    if (a) layers.push(a);
+  };
+  addLayer(s.campanhas, "campanha", "Campanhas");
+  if (s.platform === "meta") {
+    addLayer(s.conjuntos, "conjunto", "Conjuntos");
+    addLayer(s.anuncios, "anuncio", "Anúncios");
+  } else {
+    addLayer(s.conjuntos, "grupo", "Grupos de anúncios");
+    addLayer(s.anuncios, "anuncio", "Anúncios");
+  }
+
   return {
     channel: s.channel,
     platform: s.platform,
+    gasto: round2(s.resumo.gasto),
+    conversoes: round2(s.resumo.conversoes),
     score: health.score,
     grade: health.grade,
     grade_significado: GRADE_MEANING[health.grade],
     kpis,
     campanhas,
-    alertas: prioritizeAlerts(alerts),
+    alertas,
+    layers,
+    desperdicio_estimado: totalWaste(alertas),
     checks_insuficientes: health.insuficientes,
   };
 }
 
 const CHANNEL_LABEL: Record<Channel, string> = { meta: "Meta Ads", google: "Google Ads", integrated: "Integrado" };
 
-export function buildAudit(input: {
+export function buildAnalysis(input: {
   cliente: string;
   periodo: string;
   nicho: string;
+  nicho_confianca: "alta" | "media" | "baixa";
   snapshots: AccountSnapshot[];
-}): AuditResult {
+}): AnalysisResult {
   const canais = input.snapshots.map(auditChannel);
   const alertas = prioritizeAlerts(canais.flatMap((c) => c.alertas)).filter((a) => a.status !== "PASS");
 
@@ -131,43 +163,42 @@ export function buildAudit(input: {
     este_mes: alertas.filter((a) => a.severity === "MEDIO" || a.severity === "BAIXO").map((a) => `${a.evidence} → ${a.recommendation}`),
   };
 
+  // Mensagem = ping conciso (estilo WhatsApp). O plano completo, o veredito por
+  // campanha e o desperdício por categoria ficam nos campos estruturados + no PDF.
   const linhas: string[] = [];
-  linhas.push(`📋 *Auditoria — ${input.cliente}*`);
-  linhas.push(`Período: ${input.periodo} · nicho: ${input.nicho}`);
+  linhas.push(`🩺 *Análise — ${input.cliente}*`);
+  linhas.push(`Período: ${input.periodo} · nicho: ${input.nicho}${input.nicho_confianca === "baixa" ? " (régua geral)" : ""}`);
 
   for (const c of canais) {
-    linhas.push("", `*${CHANNEL_LABEL[c.channel]}* — Health Score ${c.score}/100 (${c.grade})`);
+    linhas.push("");
+    linhas.push(`*${CHANNEL_LABEL[c.channel]}* — Health Score ${c.score}/100 (${c.grade}: ${c.grade_significado})`);
+    linhas.push(`${moneyBR(c.gasto)} · ${intBR(c.conversoes)} conv.`);
     const kpiLine = c.kpis.map((k) => `${k.label} ${k.level}`).join(" · ");
     if (kpiLine) linhas.push(kpiLine);
     const pausar = c.campanhas.filter((v) => v.veredito === "PAUSAR");
     if (pausar.length) {
-      linhas.push("Pausar/revisar: " + pausar.map((v) => `${v.nome} (${moneyBR(v.gasto)})`).join(", "));
+      linhas.push("Pausar/revisar: " + pausar.map((v) => v.nome).join(", "));
     }
+  }
+
+  const top = alertas.slice(0, 5);
+  if (top.length) {
+    linhas.push("", "*O que precisa da sua atenção*");
+    for (const a of top) linhas.push(`- ${alertLine(a)}`);
+  } else {
+    linhas.push("", "✅ Sem alertas relevantes no período.");
   }
 
   if (desperdicio > 0) {
-    linhas.push("", `💸 *Desperdício estimado: ${moneyBR(desperdicio)}*`);
-    for (const [cat, val] of Object.entries(desperdicioPorCategoria).sort((a, b) => b[1] - a[1])) {
-      linhas.push(`  • ${cat}: ${moneyBR(val)}`);
-    }
-  }
-
-  const planoLinhas: string[] = [];
-  if (plano.urgente.length) planoLinhas.push("🔴 *Urgente*", ...plano.urgente.map((p) => `- ${p}`));
-  if (plano.esta_semana.length) planoLinhas.push("🟠 *Esta semana*", ...plano.esta_semana.map((p) => `- ${p}`));
-  if (plano.este_mes.length) planoLinhas.push("🟡 *Este mês*", ...plano.este_mes.map((p) => `- ${p}`));
-  if (planoLinhas.length) linhas.push("", "*Plano de ação*", ...planoLinhas);
-
-  const insuf = [...new Set(canais.flatMap((c) => c.checks_insuficientes))];
-  if (insuf.length) {
-    linhas.push("", `ℹ️ Checks sem dados suficientes (não entram na nota): ${insuf.join(", ")}.`);
+    linhas.push("", `💸 Desperdício estimado: ${moneyBR(desperdicio)} no período.`);
   }
 
   return {
-    tipo: "auditoria",
+    tipo: "analise",
     cliente: input.cliente,
     periodo: input.periodo,
     nicho: input.nicho,
+    nicho_confianca: input.nicho_confianca,
     canais,
     desperdicio_por_categoria: desperdicioPorCategoria,
     desperdicio_estimado: desperdicio,
@@ -175,3 +206,6 @@ export function buildAudit(input: {
     mensagem: linhas.join("\n"),
   };
 }
+
+/** @deprecated diagnóstico e auditoria foram unificados — use buildAnalysis. */
+export const buildAudit = buildAnalysis;

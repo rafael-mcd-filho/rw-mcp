@@ -8,7 +8,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BASE_REPORT_CSS, escapeHtml } from "../pdf-components.js";
 import type { DiagnosisResult, ChannelDiagnosis } from "./diagnosis.js";
-import type { AuditResult, ChannelAudit, CampaignVerdict } from "./audit.js";
+import type { AnalysisResult, ChannelAudit, CampaignVerdict } from "./audit.js";
+import type { LayerAnalysis } from "./layers.js";
 import type { Alert, BenchmarkResult } from "./types.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -147,6 +148,11 @@ const INTEL_CSS = `
   padding: 7px 10px; background: #f9fafb; border-left: 3px solid #d1d5db; border-radius: 0 4px 4px 0;
 }
 .separator { border: 0; border-top: 1px solid #e5e7eb; margin: 13px 0; }
+.layer-block { margin-bottom: 4px; }
+.layer-title { font-size: 11px; font-weight: 800; margin: 0 0 5px; color: #101216; }
+.layer-title span { font-weight: 600; color: #6b7280; font-size: 9px; }
+.layer-highlight { font-size: 9.5px; color: #16a34a; margin-top: 5px; }
+.layer-ok { font-size: 9.5px; color: #16a34a; margin: 4px 0 0; }
 `;
 
 function renderHeader(
@@ -308,7 +314,7 @@ export function renderDiagnosisHtml(result: DiagnosisResult): string {
 
 // ─── Auditoria ────────────────────────────────────────────────────────────────
 
-export function renderAuditHtml(result: AuditResult): string {
+export function renderAnalysisHtml(result: AnalysisResult): string {
   const logo = logoDataUri();
   const CANAL_LABEL: Record<string, string> = {
     meta: "Meta Ads", google: "Google Ads", integrated: "Integrado",
@@ -322,8 +328,8 @@ export function renderAuditHtml(result: AuditResult): string {
       canal?.score ?? 0,
       canal?.grade ?? "F",
       canal?.grade_significado ?? "",
-      0,
-      0,
+      canal?.gasto ?? 0,
+      canal?.conversoes ?? 0,
       CANAL_LABEL[canal?.channel ?? ""] ?? "Google Ads"
     )}
     ${renderKpis(canal?.kpis ?? [])}
@@ -341,15 +347,22 @@ export function renderAuditHtml(result: AuditResult): string {
     ${renderInsufNote(totalInsuf)}
   `;
 
+  const pages = [page1Body, page2Body];
+  const page3Body = renderLayers(canal?.layers ?? []);
+  if (page3Body) pages.push(page3Body);
+
   return wrapDocument(
     logo,
-    "Auditoria",
+    "Análise",
     result.cliente,
     result.periodo,
     result.nicho,
-    [page1Body, page2Body]
+    pages
   );
 }
+
+/** @deprecated diagnóstico e auditoria foram unificados — use renderAnalysisHtml. */
+export const renderAuditHtml = renderAnalysisHtml;
 
 function renderCampaignVerdicts(campanhas: CampaignVerdict[]): string {
   if (!campanhas.length) return "";
@@ -421,6 +434,59 @@ function renderActionPlan(plan: { urgente: string[]; esta_semana: string[]; este
     .join("");
   if (!rendered) return "";
   return `<div><h3>Plano de Ação</h3>${rendered}</div>`;
+}
+
+// ─── Análise por camada (campanha / conjunto-grupo / anúncio) ─────────────────
+
+function renderLayers(layers: LayerAnalysis[]): string {
+  if (!layers.some((l) => l.outliers.length || l.destaque)) return "";
+
+  const blocks = layers
+    .map((l) => {
+      const crit = l.contagem_niveis["CRITICO"] ?? 0;
+      const aten = l.contagem_niveis["ATENCAO"] ?? 0;
+      const resumo = `${l.total} no total · ${crit} crítico(s) · ${aten} em atenção`;
+
+      const rows = l.outliers
+        .map((o) => {
+          const cor = o.pior_nivel === "CRITICO" ? "#dc2626" : o.pior_nivel === "ATENCAO" ? "#d97706" : "#6b7280";
+          const parent = o.parent ? `<span>${escapeHtml(o.parent)}</span>` : "";
+          const problemas = o.problemas.slice(0, 3).join(" · ");
+          return `<tr>
+            <td><strong>${escapeHtml(o.nome)}</strong>${parent}</td>
+            <td>${escapeHtml(problemas)}</td>
+            <td class="num">${moneyBR(o.gasto)}</td>
+            <td class="num"><span class="verd" style="color:${cor}">${escapeHtml(o.pior_nivel)}</span></td>
+          </tr>`;
+        })
+        .join("");
+
+      const tabela = l.outliers.length
+        ? `<table class="table compact-table verdict-table">
+            <thead><tr>
+              <th>${escapeHtml(l.label)}</th>
+              <th>Problema</th>
+              <th class="num">Gasto</th>
+              <th class="num">Nível</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`
+        : `<p class="layer-ok">✅ Nenhum outlier relevante nesta camada.</p>`;
+
+      const d = l.destaque;
+      const destaque = d
+        ? `<p class="layer-highlight">↑ Escalar: <strong>${escapeHtml(d.nome)}</strong> — ${d.conversoes.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} conv.${d.conversoes > 0 ? ` · CPA ${moneyBR(d.gasto / d.conversoes)}` : ""}</p>`
+        : "";
+
+      return `<div class="layer-block">
+        <h4 class="layer-title">${escapeHtml(l.label)} <span>${escapeHtml(resumo)}</span></h4>
+        ${tabela}
+        ${destaque}
+      </div>`;
+    })
+    .join('<hr class="separator" />');
+
+  return `<div><h3>Análise por Camada</h3>${blocks}</div>`;
 }
 
 // ─── Wrapper HTML completo ────────────────────────────────────────────────────

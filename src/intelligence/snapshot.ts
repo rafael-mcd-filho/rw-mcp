@@ -2,11 +2,72 @@
 // AccountSnapshot que o motor de inteligência consome. Mantém o motor puro —
 // ele não conhece as APIs, só o snapshot.
 
-import type { GAccountReport, GKeyword, GSearchTerm } from "../google-ads-api.js";
+import type { GAccountReport, GAdGroup, GAd, GKeyword, GSearchTerm } from "../google-ads-api.js";
+import type { Insight, MetaActionMetric } from "../meta-api.js";
 import type { AccountSnapshot, GateCampaign, GateItem } from "./quality-gates.js";
 import type { BenchmarkNiche } from "./types.js";
 
 const round2 = (n: number): number => Math.round((Number(n) || 0) * 100) / 100;
+
+/** Mapeia uma linha de grupo/anúncio do Google para a entidade de camada. */
+function gEntity(r: GAdGroup | GAd, parent: string): GateCampaign {
+  return {
+    id: r.id,
+    nome: r.nome,
+    parent,
+    gasto: r.gasto,
+    conversoes: r.conversoes,
+    cliques: r.cliques,
+    impressoes: r.impressoes,
+    ctr: r.ctr,
+    cpc_medio: r.cpc_medio,
+    custo_por_conversao: r.custo_por_conversao,
+    status: r.status,
+  };
+}
+
+// action_type do Meta que contam como conversão (derivado de objectives.ts).
+const META_CONV_ACTIONS = new Set([
+  "onsite_conversion.messaging_conversation_started_7d",
+  "lead", "offsite_conversion.fb_pixel_lead", "onsite_web_lead",
+  "onsite_conversion.lead_grouped", "leadgen_grouped",
+  "purchase", "omni_purchase", "offsite_conversion.fb_pixel_purchase", "onsite_web_purchase",
+  "complete_registration", "offsite_conversion.fb_pixel_complete_registration",
+]);
+
+/** Conversões best-effort de uma linha de insight (max entre os tipos, evita dupla contagem). */
+function metaConversions(actions?: MetaActionMetric[]): number {
+  if (!actions) return 0;
+  let max = 0;
+  for (const a of actions) {
+    if (META_CONV_ACTIONS.has(a.action_type)) {
+      const v = parseFloat(a.value) || 0;
+      if (v > max) max = v;
+    }
+  }
+  return round2(max);
+}
+
+/** Mapeia uma linha de insight (adset/ad) do Meta para a entidade de camada. */
+function metaEntity(r: Insight, i: number, kind: "adset" | "ad"): GateCampaign {
+  const gasto = parseFloat(r.spend) || 0;
+  const impressoes = parseInt(r.impressions, 10) || 0;
+  const cliques = parseInt(r.clicks, 10) || 0;
+  const conv = metaConversions(r.actions);
+  return {
+    id: String(i),
+    nome: (kind === "ad" ? r.ad_name : r.adset_name) ?? "(sem nome)",
+    parent: kind === "ad" ? r.adset_name : r.campaign_name,
+    gasto: round2(gasto),
+    conversoes: conv,
+    cliques,
+    impressoes,
+    ctr: impressoes > 0 ? round2((cliques / impressoes) * 100) : 0,
+    cpc_medio: cliques > 0 ? round2(gasto / cliques) : 0,
+    custo_por_conversao: conv > 0 ? round2(gasto / conv) : 0,
+    frequencia: r.frequency != null ? round2(parseFloat(r.frequency)) : undefined,
+  };
+}
 
 function parsePct(v: string | null | undefined): number | null {
   if (!v || v === "N/A" || v === "--") return null;
@@ -18,7 +79,14 @@ function parsePct(v: string | null | undefined): number | null {
 
 export function googleSnapshot(
   report: GAccountReport,
-  opts: { keywords?: GKeyword[]; searchTerms?: GSearchTerm[]; niche?: BenchmarkNiche; month?: number }
+  opts: {
+    keywords?: GKeyword[];
+    searchTerms?: GSearchTerm[];
+    adGroups?: GAdGroup[];
+    ads?: GAd[];
+    niche?: BenchmarkNiche;
+    month?: number;
+  }
 ): AccountSnapshot {
   const campanhas: GateCampaign[] = report.campanhas.map((c) => ({
     id: c.id,
@@ -76,10 +144,14 @@ export function googleSnapshot(
       ctr: report.resumo.ctr,
       cpc_medio: report.resumo.cpc_medio,
       custo_por_conversao: report.resumo.custo_por_conversao,
+      cpm: report.resumo.impressoes > 0 ? round2((report.resumo.gasto_total / report.resumo.impressoes) * 1000) : 0,
+      taxa_conversao: report.resumo.cliques > 0 ? round2((report.resumo.conversoes / report.resumo.cliques) * 100) : 0,
       impression_share: impressionShare,
       quality_score_medio: qsMedio,
     },
     campanhas,
+    conjuntos: opts.adGroups?.map((g) => gEntity(g, g.campanha)),
+    anuncios: opts.ads?.map((a) => gEntity(a, a.grupo)),
     keywords,
     termos,
   };
@@ -109,16 +181,18 @@ interface MetaAccountReportLike {
 /** Mapeia o resultado de buildAccountReport (Meta) para o snapshot. */
 export function metaSnapshot(
   account: MetaAccountReportLike,
-  opts: { niche?: BenchmarkNiche; month?: number; objective?: string }
+  opts: { niche?: BenchmarkNiche; month?: number; objective?: string; adsets?: Insight[]; ads?: Insight[] }
 ): AccountSnapshot {
   let cliques = 0;
   let impressoes = 0;
   let conversoes = 0;
+  let freqNum = 0; // Σ frequência_i × impressões_i — base da média ponderada
   const gasto = account.totais.gasto;
 
   const campanhas: GateCampaign[] = account.campanhas.map((c, i) => {
     cliques += c.cliques;
     impressoes += c.impressoes;
+    freqNum += (c.frequencia || 0) * c.impressoes;
     if (CONVERSION_CATEGORIES.has(c.categoria)) conversoes += c.resultado;
     return {
       id: String(i),
@@ -137,6 +211,9 @@ export function metaSnapshot(
   const ctr = impressoes > 0 ? round2((cliques / impressoes) * 100) : 0;
   const cpc = cliques > 0 ? round2(gasto / cliques) : 0;
   const cpa = conversoes > 0 ? round2(gasto / conversoes) : 0;
+  const cpm = impressoes > 0 ? round2((gasto / impressoes) * 1000) : 0;
+  const taxaConv = cliques > 0 ? round2((conversoes / cliques) * 100) : 0;
+  const frequencia = impressoes > 0 ? round2(freqNum / impressoes) : 0;
 
   return {
     channel: "meta",
@@ -152,7 +229,12 @@ export function metaSnapshot(
       ctr,
       cpc_medio: cpc,
       custo_por_conversao: cpa,
+      cpm,
+      taxa_conversao: taxaConv,
+      frequencia,
     },
     campanhas,
+    conjuntos: opts.adsets?.map((r, i) => metaEntity(r, i, "adset")),
+    anuncios: opts.ads?.map((r, i) => metaEntity(r, i, "ad")),
   };
 }

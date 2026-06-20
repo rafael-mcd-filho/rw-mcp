@@ -12,14 +12,15 @@ import {
   getGoogleAdsAccountReport,
   getGoogleAdsKeywords,
   getGoogleAdsSearchTerms,
+  getGoogleAdsAdGroups,
+  getGoogleAdsAds,
 } from "../google-ads-api.js";
 import { findClient, clientsConfigured, clientContexto, type ClientRecord } from "../clients-db.js";
 import { resolveNiche } from "../intelligence/niche.js";
 import { googleSnapshot, metaSnapshot } from "../intelligence/snapshot.js";
-import { buildDiagnosis } from "../intelligence/diagnosis.js";
-import { buildAudit } from "../intelligence/audit.js";
+import { buildAnalysis } from "../intelligence/audit.js";
 import type { AccountSnapshot } from "../intelligence/quality-gates.js";
-import { renderDiagnosisHtml, renderAuditHtml } from "../intelligence/intelligence-pdf.js";
+import { renderAnalysisHtml } from "../intelligence/intelligence-pdf.js";
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -124,9 +125,13 @@ async function buildSnapshots(
 
   if (wantsMeta && metaId) {
     try {
-      const rows = await metaClient.getInsights({ level: "campaign", since, until, datePreset: preset, accountId: metaId });
+      const [rows, adsetRows, adRows] = await Promise.all([
+        metaClient.getInsights({ level: "campaign", since, until, datePreset: preset, accountId: metaId }),
+        metaClient.getInsights({ level: "adset", since, until, datePreset: preset, accountId: metaId }).catch(() => []),
+        metaClient.getInsights({ level: "ad", since, until, datePreset: preset, accountId: metaId }).catch(() => []),
+      ]);
       const account = buildAccountReport(rows, label);
-      snapshots.push(metaSnapshot(account as Parameters<typeof metaSnapshot>[0], { niche: niche.niche, month }));
+      snapshots.push(metaSnapshot(account as Parameters<typeof metaSnapshot>[0], { niche: niche.niche, month, adsets: adsetRows, ads: adRows }));
     } catch (e) {
       avisos.push(`Meta Ads falhou: ${(e as Error).message}`);
     }
@@ -134,12 +139,14 @@ async function buildSnapshots(
 
   if (wantsGoogle && googleId) {
     try {
-      const [report, keywords, searchTerms] = await Promise.all([
+      const [report, keywords, searchTerms, adGroups, ads] = await Promise.all([
         getGoogleAdsAccountReport(googleId, since, until, preset),
         getGoogleAdsKeywords(googleId, since, until, preset, 25).catch(() => []),
         getGoogleAdsSearchTerms(googleId, since, until, preset, 100).catch(() => []),
+        getGoogleAdsAdGroups(googleId, since, until, preset).catch(() => []),
+        getGoogleAdsAds(googleId, since, until, preset).catch(() => []),
       ]);
-      snapshots.push(googleSnapshot(report, { keywords, searchTerms, niche: niche.niche, month }));
+      snapshots.push(googleSnapshot(report, { keywords, searchTerms, adGroups, ads, niche: niche.niche, month }));
     } catch (e) {
       avisos.push(`Google Ads falhou: ${(e as Error).message}`);
     }
@@ -227,45 +234,42 @@ async function renderIntelPdfResponse(
 }
 
 export function registerIntelligenceTools(server: McpServer, metaClient: MetaAdsClient): void {
-  server.tool(
-    "get_client_diagnosis",
-    `Diagnóstico rápido de um cliente: Health Score (0–100, nota A–F), KPIs classificados por benchmark do nicho, top alertas priorizados por impacto e desperdício estimado em R$. Responde "o que precisa da minha atenção?". Ideal para check diário/semanal. Resolve nome_cliente automaticamente (Meta + Google).`,
-    INTEL_SCHEMA,
-    async (args) => {
-      try {
-        const { cliente, periodo, nicho, snapshots, avisos } = await buildSnapshots(args as IntelArgs, metaClient);
-        const result = buildDiagnosis({
-          cliente, periodo, nicho: nicho.label, nicho_confianca: nicho.confidence, snapshots,
-        });
-        const fmt = formatoFrom(args as { formato?: string });
-        if (fmt !== "json") {
-          const html = renderDiagnosisHtml(result);
-          return renderIntelPdfResponse(html, `diagnostico-${cliente}`, fmt, avisos);
-        }
-        return json(avisos.length ? { ...result, _avisos: avisos, _nicho_evidencia: nicho.evidence } : { ...result, _nicho_evidencia: nicho.evidence });
-      } catch (e) {
-        return toolError((e as Error).message);
+  // Diagnóstico e auditoria foram unificados num único produto "Análise".
+  // Cadência (ping diário vs revisão profunda) é resolvida pelo formato de saída,
+  // não por escolher entre tools: formato=json devolve um resumo curto (campo
+  // 'mensagem', ideal p/ WhatsApp/n8n), pdf/html entregam o documento completo.
+  const runAnalysis = async (args: IntelArgs) => {
+    try {
+      const { cliente, periodo, nicho, snapshots, avisos } = await buildSnapshots(args, metaClient);
+      const result = buildAnalysis({
+        cliente, periodo, nicho: nicho.label, nicho_confianca: nicho.confidence, snapshots,
+      });
+      const fmt = formatoFrom(args as { formato?: string });
+      if (fmt !== "json") {
+        const html = renderAnalysisHtml(result);
+        return renderIntelPdfResponse(html, `analise-${cliente}`, fmt, avisos);
       }
+      return json(
+        avisos.length
+          ? { ...result, _avisos: avisos, _nicho_evidencia: nicho.evidence }
+          : { ...result, _nicho_evidencia: nicho.evidence }
+      );
+    } catch (e) {
+      return toolError((e as Error).message);
     }
-  );
+  };
 
   server.tool(
-    "get_client_audit",
-    `Auditoria profunda de um cliente: tudo do diagnóstico + veredito por campanha (MANTER/OTIMIZAR/PAUSAR), desperdício por categoria e plano de ação priorizado (urgente/semana/mês). Responde "a conta está saudável? onde perco dinheiro?". Ideal para revisão mensal ou pré-reunião.`,
+    "get_client_analysis",
+    `Análise completa de um cliente (diagnóstico + auditoria unificados): Health Score (0–100, nota A–F), KPIs classificados por benchmark do nicho, alertas priorizados por impacto, desperdício em R$ (total e por categoria), veredito por campanha (MANTER/OTIMIZAR/PAUSAR) e plano de ação (urgente/esta semana/este mês). Responde "como está a conta e o que fazer?". Resolve nome_cliente automaticamente (Meta + Google). formato: omita p/ JSON (campo 'mensagem' = resumo curto p/ WhatsApp), 'pdf' p/ entrega, 'html' p/ dashboard navegável.`,
     INTEL_SCHEMA,
-    async (args) => {
-      try {
-        const { cliente, periodo, nicho, snapshots, avisos } = await buildSnapshots(args as IntelArgs, metaClient);
-        const result = buildAudit({ cliente, periodo, nicho: nicho.label, snapshots });
-        const fmt = formatoFrom(args as { formato?: string });
-        if (fmt !== "json") {
-          const html = renderAuditHtml(result);
-          return renderIntelPdfResponse(html, `auditoria-${cliente}`, fmt, avisos);
-        }
-        return json(avisos.length ? { ...result, _avisos: avisos, _nicho_evidencia: nicho.evidence } : { ...result, _nicho_evidencia: nicho.evidence });
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
+    (args) => runAnalysis(args as IntelArgs)
   );
+
+  // Aliases legados — mantidos só por compatibilidade com automações/n8n que ainda
+  // chamam estes nomes. Agora ambos retornam a Análise completa unificada.
+  const DEPRECATED =
+    `[DEPRECADO — use get_client_analysis] Mantido por compatibilidade; retorna a Análise completa unificada (diagnóstico + auditoria).`;
+  server.tool("get_client_diagnosis", DEPRECATED, INTEL_SCHEMA, (args) => runAnalysis(args as IntelArgs));
+  server.tool("get_client_audit", DEPRECATED, INTEL_SCHEMA, (args) => runAnalysis(args as IntelArgs));
 }

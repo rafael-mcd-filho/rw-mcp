@@ -58,6 +58,7 @@ const BANDS: Record<string, Band> = {
   "google:ctr:default": { direction: "higher_is_better", cuts: [3.0, 5.0, 8.0], reference: "3–8% (Search)" },
   "google:cpc:default": { direction: "lower_is_better", cuts: [2.0, 6.0, 12.0], reference: "R$2–12" },
   "google:cpl:default": { direction: "lower_is_better", cuts: [35, 90, 180], reference: "R$35–180" },
+  "google:cpm:default": { direction: "lower_is_better", cuts: [15, 35, 60], reference: "R$15–60 (estimativa)" },
   "google:taxa_conversao:default": { direction: "higher_is_better", cuts: [3.0, 5.0, 8.0], reference: "3–8%" },
   "google:quality_score:default": { direction: "higher_is_better", cuts: [4, 5, 7], reference: "QS 4–8+" },
   "google:impression_share:default": { direction: "higher_is_better", cuts: [20, 40, 70], reference: "20–70%" },

@@ -15,6 +15,7 @@ import { classifyMetric } from "./benchmarks.js";
 export interface GateCampaign {
   id: string;
   nome: string;
+  parent?: string; // entidade pai (campanha do conjunto, conjunto/grupo do anúncio)
   gasto: number;
   conversoes: number;
   cliques: number;
@@ -48,10 +49,15 @@ export interface AccountSnapshot {
     ctr: number;
     cpc_medio: number;
     custo_por_conversao: number;
+    cpm?: number;
+    taxa_conversao?: number; // % — conversões / cliques
+    frequencia?: number; // Meta — média ponderada por impressões
     impression_share?: number | null;
     quality_score_medio?: number | null;
   };
   campanhas: GateCampaign[];
+  conjuntos?: GateCampaign[]; // Meta: conjuntos (adsets) · Google: grupos de anúncios
+  anuncios?: GateCampaign[]; // anúncios individuais (Meta ads / Google RSAs)
   keywords?: GateItem[];
   termos?: GateItem[];
   pixelEventosRecentes?: boolean | null; // Meta; null = desconhecido
