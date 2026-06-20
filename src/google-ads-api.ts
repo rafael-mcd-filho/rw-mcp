@@ -164,6 +164,8 @@ export interface GCampaign {
   cpc_medio: number;
   custo_por_conversao: number;
   parcela_impressoes: string;
+  is_perdida_orcamento?: number | null; // % de IS perdida por orçamento (Search)
+  is_perdida_rank?: number | null; // % de IS perdida por rank/qualidade (Search)
 }
 
 export interface GAccountReport {
@@ -261,6 +263,8 @@ export async function getGoogleAdsCampaigns(
       averageCpc: string;
       costPerConversion: string;
       searchImpressionShare: number | string;
+      searchBudgetLostImpressionShare: number | string;
+      searchRankLostImpressionShare: number | string;
     };
   }>(customerId, `
     SELECT
@@ -275,12 +279,17 @@ export async function getGoogleAdsCampaigns(
       metrics.ctr,
       metrics.average_cpc,
       metrics.cost_per_conversion,
-      metrics.search_impression_share
+      metrics.search_impression_share,
+      metrics.search_budget_lost_impression_share,
+      metrics.search_rank_lost_impression_share
     FROM campaign
     WHERE ${where}
       AND campaign.status != 'REMOVED'
     ORDER BY metrics.cost_micros DESC
   `);
+
+  const pctOrNull = (v: number | string | null | undefined): number | null =>
+    v == null || String(v) === "--" || String(v) === "" ? null : r2(safeFloat(v) * 100);
 
   return rows.map(r => {
     const sis = r.metrics?.searchImpressionShare;
@@ -302,6 +311,8 @@ export async function getGoogleAdsCampaigns(
       cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
       custo_por_conversao: micros(r.metrics?.costPerConversion ?? "0"),
       parcela_impressoes: sisLabel,
+      is_perdida_orcamento: pctOrNull(r.metrics?.searchBudgetLostImpressionShare),
+      is_perdida_rank: pctOrNull(r.metrics?.searchRankLostImpressionShare),
     };
   });
 }

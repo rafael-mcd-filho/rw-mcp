@@ -53,6 +53,8 @@ export interface AccountSnapshot {
     taxa_conversao?: number; // % — conversões / cliques
     frequencia?: number; // Meta — média ponderada por impressões
     impression_share?: number | null;
+    is_perdida_orcamento?: number | null; // Google, % de IS perdida por orçamento
+    is_perdida_rank?: number | null; // Google, % de IS perdida por rank/qualidade
     quality_score_medio?: number | null;
   };
   campanhas: GateCampaign[];
@@ -242,6 +244,18 @@ function gateImpressionShare(s: AccountSnapshot): GateOutcome {
   }
   const is = s.resumo.impression_share;
   const status = is < 20 ? "FAIL" : is < 40 ? "ATENCAO" : "PASS";
+  // Aponta o porquê: orçamento (aumentar budget) vs rank/qualidade (lance/QS).
+  const bud = s.resumo.is_perdida_orcamento;
+  const rank = s.resumo.is_perdida_rank;
+  let porque = "";
+  let recomendacao = "Avaliar aumento de orçamento/lance ou melhora de Quality Score.";
+  if (bud != null && rank != null) {
+    porque = ` Perdida: ${pctBR(bud)} por orçamento, ${pctBR(rank)} por rank/qualidade.`;
+    recomendacao =
+      bud >= rank
+        ? `Gargalo é orçamento (${pctBR(bud)} perdida) — aumentar budget; depois rank (${pctBR(rank)}).`
+        : `Gargalo é rank/qualidade (${pctBR(rank)} perdida) — melhorar lance e Quality Score; orçamento perde ${pctBR(bud)}.`;
+  }
   const alerts: Alert[] =
     status === "PASS"
       ? []
@@ -252,8 +266,8 @@ function gateImpressionShare(s: AccountSnapshot): GateOutcome {
           status,
           channel: s.channel,
           category: "Estrutura",
-          evidence: `Parcela de impressões ${pctBR(is)} (bom: ≥ 40%).`,
-          recommendation: "Avaliar aumento de orçamento/lance ou melhora de Quality Score.",
+          evidence: `Parcela de impressões ${pctBR(is)} (bom: ≥ 40%).${porque}`,
+          recommendation: recomendacao,
         }];
   return { check: { id: "impression-share", category: "Estrutura", severity: "MEDIO", status }, alerts };
 }

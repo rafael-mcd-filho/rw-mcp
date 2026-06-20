@@ -153,6 +153,12 @@ const INTEL_CSS = `
 .layer-title span { font-weight: 600; color: #6b7280; font-size: 9px; }
 .layer-highlight { font-size: 9.5px; color: #16a34a; margin-top: 5px; }
 .layer-ok { font-size: 9.5px; color: #16a34a; margin: 4px 0 0; }
+.hm { margin: 6px 0 12px; }
+.hm-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.hm-label { width: 128px; font-size: 9.5px; color: #374151; flex-shrink: 0; }
+.hm-bar { flex: 1; height: 10px; border-radius: 3px; overflow: hidden; display: flex; background: #eceff3; }
+.hm-bar > div { height: 100%; }
+.hm-counts { width: 104px; text-align: right; font-size: 9px; color: #6b7280; flex-shrink: 0; }
 `;
 
 function renderHeader(
@@ -438,6 +444,26 @@ function renderActionPlan(plan: { urgente: string[]; esta_semana: string[]; este
 
 // ─── Análise por camada (campanha / conjunto-grupo / anúncio) ─────────────────
 
+function renderLayerHeatmap(layers: LayerAnalysis[]): string {
+  const rows = layers
+    .map((l) => {
+      const crit = l.contagem_niveis["CRITICO"] ?? 0;
+      const aten = l.contagem_niveis["ATENCAO"] ?? 0;
+      const bom = l.contagem_niveis["BOM"] ?? 0;
+      const exc = l.contagem_niveis["EXCELENTE"] ?? 0;
+      const tot = Math.max(1, l.avaliados);
+      const seg = (n: number, cor: string) =>
+        n > 0 ? `<div style="width:${Math.round((n / tot) * 100)}%;background:${cor}"></div>` : "";
+      return `<div class="hm-row">
+        <span class="hm-label">${escapeHtml(l.label)}</span>
+        <div class="hm-bar">${seg(crit, "#dc2626")}${seg(aten, "#d97706")}${seg(bom, "#22c55e")}${seg(exc, "#16a34a")}</div>
+        <span class="hm-counts">🔴 ${crit} · 🟡 ${aten} · 🟢 ${bom + exc}</span>
+      </div>`;
+    })
+    .join("");
+  return `<div class="hm">${rows}</div>`;
+}
+
 function renderLayers(layers: LayerAnalysis[]): string {
   if (!layers.some((l) => l.outliers.length || l.destaque)) return "";
 
@@ -486,7 +512,7 @@ function renderLayers(layers: LayerAnalysis[]): string {
     })
     .join('<hr class="separator" />');
 
-  return `<div><h3>Análise por Camada</h3>${blocks}</div>`;
+  return `<div><h3>Análise por Camada</h3>${renderLayerHeatmap(layers)}${blocks}</div>`;
 }
 
 // ─── Wrapper HTML completo ────────────────────────────────────────────────────

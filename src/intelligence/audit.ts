@@ -6,7 +6,7 @@ import { computeHealthScore, GRADE_MEANING } from "./health-score.js";
 import { prioritizeAlerts, alertLine } from "./alerts.js";
 import { classifyKpis } from "./diagnosis.js";
 import { analyzeLayer, type LayerAnalysis, type LayerKind } from "./layers.js";
-import type { Alert, BenchmarkResult, Channel, ClassifyContext, Platform } from "./types.js";
+import type { Alert, BenchmarkResult, Channel, ClassifyContext, Platform, Severity } from "./types.js";
 
 type Verdict = "MANTER" | "OTIMIZAR" | "PAUSAR" | "SEM_ENTREGA";
 
@@ -157,10 +157,18 @@ export function buildAnalysis(input: {
   }
   const desperdicio = round2(Object.values(desperdicioPorCategoria).reduce((acc, v) => acc + v, 0));
 
+  // Plano ordenado por R$ economizado dentro de cada bucket; prefixa o impacto.
+  const planoItem = (a: Alert) =>
+    `${a.impactEstimate ? `[${moneyBR(a.impactEstimate)}] ` : ""}${a.evidence} → ${a.recommendation}`;
+  const bucket = (sevs: Severity[]) =>
+    alertas
+      .filter((a) => sevs.includes(a.severity))
+      .sort((x, y) => (y.impactEstimate ?? 0) - (x.impactEstimate ?? 0))
+      .map(planoItem);
   const plano = {
-    urgente: alertas.filter((a) => a.severity === "CRITICO").map((a) => `${a.evidence} → ${a.recommendation}`),
-    esta_semana: alertas.filter((a) => a.severity === "ALTO").map((a) => `${a.evidence} → ${a.recommendation}`),
-    este_mes: alertas.filter((a) => a.severity === "MEDIO" || a.severity === "BAIXO").map((a) => `${a.evidence} → ${a.recommendation}`),
+    urgente: bucket(["CRITICO"]),
+    esta_semana: bucket(["ALTO"]),
+    este_mes: bucket(["MEDIO", "BAIXO"]),
   };
 
   // Mensagem = ping conciso (estilo WhatsApp). O plano completo, o veredito por

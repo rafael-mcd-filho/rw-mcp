@@ -102,17 +102,19 @@ export function googleSnapshot(
     status: c.status,
   }));
 
-  // Parcela de impressões da conta: média ponderada por impressões das campanhas.
-  let isNum = 0;
-  let isDen = 0;
+  // Parcela de impressões (e IS perdida por orçamento/rank): média ponderada por impressões.
+  let isNum = 0, isDen = 0;
+  let budNum = 0, budDen = 0;
+  let rankNum = 0, rankDen = 0;
   for (const c of report.campanhas) {
     const p = parsePct(c.parcela_impressoes);
-    if (p != null && c.impressoes > 0) {
-      isNum += p * c.impressoes;
-      isDen += c.impressoes;
-    }
+    if (p != null && c.impressoes > 0) { isNum += p * c.impressoes; isDen += c.impressoes; }
+    if (c.is_perdida_orcamento != null && c.impressoes > 0) { budNum += c.is_perdida_orcamento * c.impressoes; budDen += c.impressoes; }
+    if (c.is_perdida_rank != null && c.impressoes > 0) { rankNum += c.is_perdida_rank * c.impressoes; rankDen += c.impressoes; }
   }
   const impressionShare = isDen > 0 ? round2(isNum / isDen) : null;
+  const isPerdidaOrcamento = budDen > 0 ? round2(budNum / budDen) : null;
+  const isPerdidaRank = rankDen > 0 ? round2(rankNum / rankDen) : null;
 
   // Quality Score médio: média simples das keywords com QS definido.
   const qsVals = (opts.keywords ?? []).map((k) => k.quality_score).filter((q): q is number => typeof q === "number");
@@ -147,6 +149,8 @@ export function googleSnapshot(
       cpm: report.resumo.impressoes > 0 ? round2((report.resumo.gasto_total / report.resumo.impressoes) * 1000) : 0,
       taxa_conversao: report.resumo.cliques > 0 ? round2((report.resumo.conversoes / report.resumo.cliques) * 100) : 0,
       impression_share: impressionShare,
+      is_perdida_orcamento: isPerdidaOrcamento,
+      is_perdida_rank: isPerdidaRank,
       quality_score_medio: qsMedio,
     },
     campanhas,
