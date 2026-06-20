@@ -77,6 +77,7 @@ const GOOGLE_PDF_CSS = `
 .g-section-title { font-size: 12px; font-weight: 750; color: #101216; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
 .g-section-rule { border: none; border-top: 1px solid #e5e7eb; margin: 0 0 8px; }
 .note-row { font-size: 9px; color: #6b7280; font-style: italic; margin-top: 5px; }
+.g-page2-body { height: 250mm; overflow: hidden; }
 `;
 
 // ─── Layout helpers ───────────────────────────────────────────────────────────
@@ -246,7 +247,7 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
   </table>`;
 
   // Keywords table
-  const kwRows = (report.keywords ?? []).slice(0, 14).map(k => `<tr>
+  const kwRows = (report.keywords ?? []).slice(0, 12).map(k => `<tr>
     <td><strong>${esc(k.keyword)}</strong><span>${esc(k.campanha)}</span></td>
     <td>${matchBadge(k.correspondencia)}</td>
     <td class="num">${money(k.gasto)}</td>
@@ -271,8 +272,8 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
 
   // Search terms section (top by gasto)
   const terms = (report.termos_pesquisa ?? []).sort((a, b) => b.gasto - a.gasto);
-  const wasteTerms = terms.filter(t => t.gasto > 0 && t.conversoes === 0).slice(0, 6);
-  const goodTerms  = terms.filter(t => t.conversoes > 0).sort((a, b) => (a.gasto / a.conversoes) - (b.gasto / b.conversoes)).slice(0, 6);
+  const wasteTerms = terms.filter(t => t.gasto > 0 && t.conversoes === 0).slice(0, 5);
+  const goodTerms  = terms.filter(t => t.conversoes > 0).sort((a, b) => (a.gasto / a.conversoes) - (b.gasto / b.conversoes)).slice(0, 5);
 
   function termBlock(rows: typeof terms, title: string, emptyMsg: string) {
     const html = rows.map(t => `<tr>
@@ -303,6 +304,7 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
     : "";
 
   return `<div class="page compact-page">
+    <div class="g-page2-body">
     ${header(report.cliente ?? "Cliente", report.periodo, "Google Ads · Grupos e Keywords")}
     <div class="section">
       ${sectionTitle("Grupos de Anúncio")}
@@ -312,9 +314,10 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
     <div class="section">
       ${sectionTitle("Palavras-chave")}
       ${kwTable}
-      ${(report.keywords?.length ?? 0) > 14 ? `<p class="note-row">Exibindo as 14 keywords de maior investimento.</p>` : ""}
+      ${(report.keywords?.length ?? 0) > 12 ? `<p class="note-row">Exibindo as 12 keywords de maior investimento.</p>` : ""}
     </div>
     ${termsSection}
+    </div>
     ${footer(report.cliente ?? "Cliente", report.periodo, 2, 3)}
   </div>`;
 }
