@@ -207,7 +207,7 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
   const campaigns = main
     ? model.campanhas.filter((campaign) => campaign.categoria === main.category)
     : model.campanhas;
-  const topCampaigns = campaigns.slice(0, 7);
+  const topCampaigns = campaigns.slice(0, 5);
 
   const metricCards: MetricCard[] = main
     ? [
@@ -255,7 +255,8 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
     model,
     2,
     3,
-    `<section class="section">
+    `<div class="p2-body">
+    <section class="section">
       <h2>${escapeHtml(title)}</h2>
       <p>${escapeHtml(paragraph)}</p>
       ${renderMetricGrid(metricCards)}
@@ -274,7 +275,8 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
         ${renderBars(costBars)}
       </div>
     </div>
-    <div class="note">${escapeHtml(model.notasMetodologicas[1])}</div>`,
+    <div class="note">${escapeHtml(model.notasMetodologicas[1])}</div>
+    </div>`,
     false,
     logo
   );

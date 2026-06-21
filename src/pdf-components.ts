@@ -251,4 +251,5 @@ p { margin: 0; font-size: 12px; line-height: 1.45; color: #3b414c; }
 .compact-page .bar-row small { font-size: 8px; }
 .compact-page .insight-list { gap: 5px; margin-top: 6px; }
 .compact-page .insight { font-size: 9.4px; line-height: 1.24; }
+.p2-body { height: 220mm; overflow: hidden; }
 `;
