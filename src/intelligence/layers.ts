@@ -60,7 +60,7 @@ function entityKpis(e: GateCampaign, ctx: ClassifyContext): BenchmarkResult[] {
 
   push(classifyMetric("ctr", e.ctr, ctx));
   push(classifyMetric("cpc", e.cpc_medio, ctx));
-  if (cpm != null) push(classifyMetric("cpm", cpm, ctx));
+  if (ctx.platform === "meta" && cpm != null) push(classifyMetric("cpm", cpm, ctx));
   if (e.conversoes > 0) push(classifyMetric("cpl", e.custo_por_conversao, ctx));
   if (e.conversoes > 0 && taxa != null) push(classifyMetric("taxa_conversao", taxa, ctx));
   if (ctx.platform === "meta" && e.frequencia != null) push(classifyMetric("frequencia", e.frequencia, ctx));

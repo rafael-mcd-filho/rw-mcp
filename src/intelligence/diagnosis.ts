@@ -47,7 +47,7 @@ export function classifyKpis(s: AccountSnapshot): BenchmarkResult[] {
 
   push(classifyMetric("ctr", s.resumo.ctr, ctx));
   push(classifyMetric("cpc", s.resumo.cpc_medio, ctx));
-  if (s.resumo.cpm != null) push(classifyMetric("cpm", s.resumo.cpm, ctx));
+  if (s.platform === "meta" && s.resumo.cpm != null) push(classifyMetric("cpm", s.resumo.cpm, ctx));
   if (s.resumo.conversoes > 0) push(classifyMetric("cpl", s.resumo.custo_por_conversao, ctx));
   if (s.resumo.conversoes > 0 && s.resumo.taxa_conversao != null) {
     push(classifyMetric("taxa_conversao", s.resumo.taxa_conversao, ctx));
