@@ -507,6 +507,19 @@ export class MetaAdsClient {
     return this.requestPaged<Ad>(endpoint, params);
   }
 
+  /** URL da imagem do criativo de um anúncio (image_url preferido, senão thumbnail_url). */
+  async getAdCreativeThumb(adId: string): Promise<string | null> {
+    try {
+      const res = await this.request<{ creative?: { thumbnail_url?: string; image_url?: string } }>(
+        adId,
+        { fields: "creative{thumbnail_url,image_url}" }
+      );
+      return res.creative?.image_url ?? res.creative?.thumbnail_url ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   // Busca insights para um único período
   async getInsights(options: InsightsOptions): Promise<Insight[]> {
     const { level, entityId } = options;

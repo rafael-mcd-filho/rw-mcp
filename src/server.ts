@@ -40,7 +40,7 @@ import {
 import { renderGoogleReportHtml, type GoogleReportComparison } from "./google-pdf.js";
 import {
   processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
-  type MetaReportComparison,
+  type MetaReportComparison, type TopCriativo,
 } from "./meta-pdf.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
@@ -482,6 +482,20 @@ function smartPreviousPeriod(since?: string, until?: string): { since: string; u
   const pu = new Date(s.getTime() - dayMs);
   const ps = new Date(pu.getTime() - (days - 1) * dayMs);
   return { since: iso(ps), until: iso(pu) };
+}
+
+/** Baixa uma imagem e devolve como data URI base64 (embutível no PDF). Null se falhar. */
+async function imageToDataUri(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "image/jpeg";
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > 900_000) return null; // evita inflar o PDF
+    return `data:${ct};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  }
 }
 
 function periodLabelFrom(since?: string, until?: string, preset?: string): string {
@@ -1004,6 +1018,27 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       const demographics = processMetaDemographics(demoRows);
       const funil = buildMetaFunil(adsets, accountRows);
 
+      // Top criativo do período (melhor resultado) com preview embutido.
+      let topCriativo: TopCriativo | undefined;
+      try {
+        const topAd = [...ads].filter((a) => a.gasto > 0).sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)[0];
+        if (topAd?.ad_id) {
+          const url = await client.getAdCreativeThumb(topAd.ad_id);
+          topCriativo = {
+            nome: topAd.nome,
+            conjunto: topAd.conjunto,
+            headlineLabel: topAd.headlineLabel,
+            resultado: topAd.resultado,
+            custo_resultado: topAd.custo_resultado,
+            gasto: topAd.gasto,
+            ctr: topAd.ctr,
+            preview: url ? await imageToDataUri(url) : null,
+          };
+        }
+      } catch {
+        // sem destaque de criativo se falhar
+      }
+
       // Totais da conta
       let totalImp = 0, totalReach = 0, totalCliques = 0, totalFreqWeight = 0;
       const toI = (v: unknown) => parseInt(String(v ?? "0"), 10) || 0;
@@ -1074,6 +1109,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         cliente,
         periodo,
         comparacao,
+        topCriativo,
         campanhas: accountReport.campanhas,
         totais: { gasto: accountReport.totais.gasto, totalImpressions: totalImp, totalReach, totalCliques, avgCTR, avgCPM, avgFrequency },
         leitura,

@@ -34,6 +34,7 @@ export interface MetaAdsetRow {
 }
 
 export interface MetaAdRow {
+  ad_id?: string;
   nome: string;
   conjunto: string;
   campanha: string;
@@ -104,6 +105,7 @@ export function processMetaAds(rows: Insight[]): MetaAdRow[] {
       const config = detectCategory(r.campaign_name ?? "", r.objective);
       const agg = aggregate([r], config);
       return {
+        ad_id: r.ad_id,
         nome: r.ad_name ?? "(sem nome)",
         conjunto: r.adset_name ?? "—",
         campanha: r.campaign_name ?? "—",
@@ -445,7 +447,23 @@ function page2(cliente: string, periodo: string, adsets: MetaAdsetRow[]): string
 
 // ─── Página 3: Anúncios ───────────────────────────────────────────────────────
 
-function page3(cliente: string, periodo: string, ads: MetaAdRow[]): string {
+function renderTopCriativo(t?: TopCriativo): string {
+  if (!t) return "";
+  const img = t.preview
+    ? `<img src="${t.preview}" alt="Criativo" style="width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid #e5e7eb;flex-shrink:0" />`
+    : `<div style="width:96px;height:96px;border-radius:8px;border:1px solid #e5e7eb;background:#f1f5f9;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:9px;text-align:center;flex-shrink:0">sem<br/>preview</div>`;
+  return `<div style="display:flex;gap:14px;align-items:center;padding:12px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:12px">
+    ${img}
+    <div style="min-width:0">
+      <div style="font-size:10px;font-weight:700;color:#1A53F0;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Top criativo do período</div>
+      <div style="font-size:13px;font-weight:800;color:#101216;margin-bottom:2px">${esc(t.nome)}</div>
+      <div style="font-size:10px;color:#6b7280;margin-bottom:5px">${esc(t.conjunto)}</div>
+      <div style="font-size:10.5px;color:#303641">${intBR(t.resultado)} ${esc(t.headlineLabel.toLowerCase())} · ${money(t.gasto)} · ${t.resultado > 0 ? `custo ${money(t.custo_resultado)}` : "sem conversões"} · CTR ${pctBR(t.ctr)}</div>
+    </div>
+  </div>`;
+}
+
+function page3(cliente: string, periodo: string, ads: MetaAdRow[], topCriativo?: TopCriativo): string {
   const rows = ads.slice(0, 18).map(a => `<tr>
     <td><strong>${esc(a.nome)}</strong><span>${esc(a.conjunto)}</span></td>
     <td class="num">${money(a.gasto)}</td>
@@ -477,6 +495,7 @@ function page3(cliente: string, periodo: string, ads: MetaAdRow[]): string {
 
   return `<div class="page compact-page">
     ${pageHeader(cliente, periodo, "Meta Ads · Anúncios")}
+    ${renderTopCriativo(topCriativo)}
     <div class="section" style="margin-top:6px">
       ${sectionTitle("Anúncios em Destaque")}
       ${table}
@@ -577,10 +596,22 @@ export interface MetaReportComparison {
   investimento: { atual: number; anterior: number; pct: number | null };
 }
 
+export interface TopCriativo {
+  nome: string;
+  conjunto: string;
+  headlineLabel: string;
+  resultado: number;
+  custo_resultado: number;
+  gasto: number;
+  ctr: number;
+  preview: string | null; // data URI (base64) ou null
+}
+
 export interface MetaPdfParams {
   cliente: string;
   periodo: string;
   comparacao?: MetaReportComparison;
+  topCriativo?: TopCriativo;
   campanhas: CampaignRow[];
   totais: {
     gasto: number;
@@ -614,7 +645,7 @@ ${META_PDF_CSS}
 <body>
 ${page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura, p.comparacao)}
 ${page2(p.cliente, p.periodo, p.adsets)}
-${page3(p.cliente, p.periodo, p.ads)}
+${page3(p.cliente, p.periodo, p.ads, p.topCriativo)}
 ${page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas)}
 <script>window.__READY__ = true;</script>
 </body>
