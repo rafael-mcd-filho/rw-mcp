@@ -1139,6 +1139,39 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
     }
   );
 
+  // ─── WhatsApp via Evolution API ─────────────────────────────────────────────
+
+  server.tool(
+    "send_whatsapp_message",
+    "Envia mensagem de texto via WhatsApp usando a Evolution API. Use APENAS após o usuário aprovar a mensagem no chat.",
+    {
+      phone: z.string().describe("Número do destinatário com DDI+DDD, só dígitos (ex: 5583999999999)."),
+      message: z.string().describe("Texto completo da mensagem a enviar."),
+    },
+    async (args) => {
+      const baseUrl = (process.env.EVOLUTION_URL ?? "https://evolution.rwsolucoesdigitais.com").replace(/\/$/, "");
+      const instance = process.env.EVOLUTION_INSTANCE ?? "RWSL";
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      if (!apiKey) return toolError("EVOLUTION_API_KEY não configurada no servidor.");
+
+      const res = await fetch(`${baseUrl}/message/sendText/${instance}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: apiKey },
+        body: JSON.stringify({ number: args.phone, text: args.message }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => res.statusText);
+        return toolError(`Evolution API retornou ${res.status}: ${body}`);
+      }
+
+      const data = await res.json() as Record<string, unknown>;
+      const key = data.key as Record<string, unknown> | undefined;
+      const msgId = key?.id ?? data.id ?? "ok";
+      return json({ enviado: true, messageId: msgId, destinatario: args.phone });
+    }
+  );
+
   // ─── Base de clientes (webhook n8n) ─────────────────────────────────────────
 
   const CLIENT_NAME_LOOKUP_SCHEMA = {
