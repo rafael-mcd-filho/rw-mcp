@@ -271,13 +271,32 @@ type CampaignRow = {
   cpc: number; cpm: number; frequencia: number;
 };
 
+function deltaChipMeta(pct: number | null, dir: "higher" | "lower" | "neutral"): string {
+  if (pct == null) return `<span style="color:#9ca3af;font-weight:700">novo</span>`;
+  const rounded = Math.round(pct);
+  if (rounded === 0) return `<span style="color:#6b7280;font-weight:700">→ 0%</span>`;
+  const up = pct > 0;
+  let color = "#6b7280";
+  if (dir !== "neutral") color = (dir === "lower" ? !up : up) ? "#16a34a" : "#dc2626";
+  return `<span style="color:${color};font-weight:700">${up ? "↑" : "↓"} ${Math.abs(rounded)}%</span>`;
+}
+
+function metaExecSummary(totais: { gasto: number }, funil: MetaFunil, c?: MetaReportComparison): string {
+  const base = `<strong>Resumo do período:</strong> ${money(totais.gasto)} · ${intBR(funil.meta_valor)} ${esc(funil.meta_label.toLowerCase())}${funil.meta_valor > 0 ? ` · CPA ${cpa(totais.gasto, funil.meta_valor)}` : ""}`;
+  const vs = c
+    ? `<div style="margin-top:4px;font-size:10.3px;color:#5f6673">vs período anterior (${esc(c.periodo_anterior)}): resultados ${deltaChipMeta(c.resultado.pct, "higher")} · CPA ${deltaChipMeta(c.cpa.pct, "lower")} · CTR ${deltaChipMeta(c.ctr.pct, "higher")} · investimento ${deltaChipMeta(c.investimento.pct, "neutral")}</div>`
+    : "";
+  return `<div style="margin:12px 0 2px;padding:10px 13px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:11px;color:#303641;line-height:1.45">${base}${vs}</div>`;
+}
+
 function page1(
   cliente: string,
   periodo: string,
   totais: { gasto: number; totalImpressions: number; totalReach: number; totalCliques: number; avgCTR: number; avgCPM: number; avgFrequency: number },
   campanhas: CampaignRow[],
   funil: MetaFunil,
-  leitura: string[]
+  leitura: string[],
+  comparacao?: MetaReportComparison
 ): string {
   const totalGasto = totais.gasto;
 
@@ -366,6 +385,7 @@ function page1(
 
   return `<div class="page compact-page">
     ${pageHeader(cliente, periodo, "Relatório Meta Ads")}
+    ${metaExecSummary(totais, funil, comparacao)}
     ${kpiHtml}
     ${funilHtml}
     <div class="section">
@@ -549,9 +569,18 @@ function page4(
 
 // ─── API pública ───────────────────────────────────────────────────────────────
 
+export interface MetaReportComparison {
+  periodo_anterior: string;
+  resultado: { atual: number; anterior: number; pct: number | null };
+  cpa: { atual: number; anterior: number; pct: number | null };
+  ctr: { atual: number; anterior: number; pct: number | null };
+  investimento: { atual: number; anterior: number; pct: number | null };
+}
+
 export interface MetaPdfParams {
   cliente: string;
   periodo: string;
+  comparacao?: MetaReportComparison;
   campanhas: CampaignRow[];
   totais: {
     gasto: number;
@@ -583,7 +612,7 @@ ${META_PDF_CSS}
 </style>
 </head>
 <body>
-${page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura)}
+${page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura, p.comparacao)}
 ${page2(p.cliente, p.periodo, p.adsets)}
 ${page3(p.cliente, p.periodo, p.ads)}
 ${page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas)}

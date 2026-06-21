@@ -40,6 +40,7 @@ import {
 import { renderGoogleReportHtml, type GoogleReportComparison } from "./google-pdf.js";
 import {
   processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
+  type MetaReportComparison,
 } from "./meta-pdf.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
@@ -973,6 +974,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       ...COMMON_COMPAT_SCHEMA,
       ...ACCOUNT_ID_SCHEMA,
       ...FORMATO_SCHEMA,
+      comparar: z.boolean().optional().describe("Compara com o período anterior (padrão: true). Passe false para não comparar."),
     },
     async (args) => {
       const { since, until } = periodFrom(args);
@@ -1016,6 +1018,39 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       const avgCPM = totalImp > 0 ? (accountReport.totais.gasto / totalImp) * 1000 : 0;
       const avgFrequency = totalReach > 0 ? totalFreqWeight / totalReach : 0;
 
+      // Comparação com o período anterior (padrão; opt-out comparar:false).
+      const CONV_CATS = new Set(["lead_form", "messages", "sales"]);
+      const resultadoDe = (rep: typeof accountReport) =>
+        rep.campanhas.reduce((s, c) => s + (CONV_CATS.has(c.categoria) ? c.resultado : 0), 0);
+      let comparacao: MetaReportComparison | undefined;
+      const prevP = (args as { comparar?: boolean }).comparar !== false
+        ? smartPreviousPeriod(periodSince, periodUntil)
+        : null;
+      if (prevP) {
+        try {
+          const prevRows = await client.getInsights({ level: "campaign", since: prevP.since, until: prevP.until, accountId: account_id });
+          const prevReport = buildAccountReport(prevRows, `${prevP.since} a ${prevP.until}`);
+          if (prevReport.totais.gasto > 0) {
+            let pImp = 0, pClk = 0;
+            for (const r of prevRows) { pImp += toI(r.impressions); pClk += toI(r.clicks); }
+            const prevCtr = pImp > 0 ? (pClk / pImp) * 100 : 0;
+            const curRes = resultadoDe(accountReport);
+            const prevRes = resultadoDe(prevReport);
+            const delta = (a: number, b: number) => ({ atual: a, anterior: b, pct: b > 0 ? ((a - b) / b) * 100 : null });
+            const cpaOf = (g: number, res: number) => (res > 0 ? g / res : 0);
+            comparacao = {
+              periodo_anterior: `${prevP.since} a ${prevP.until}`,
+              resultado: delta(curRes, prevRes),
+              cpa: delta(cpaOf(accountReport.totais.gasto, curRes), cpaOf(prevReport.totais.gasto, prevRes)),
+              ctr: delta(avgCTR, prevCtr),
+              investimento: delta(accountReport.totais.gasto, prevReport.totais.gasto),
+            };
+          }
+        } catch {
+          // sem comparação se o período anterior falhar
+        }
+      }
+
       const leitura = [
         `Investimento total: ${moneyBR(accountReport.totais.gasto)} em ${accountReport.campanhas.filter(c => c.gasto > 0).length} campanhas ativas.`,
         ...accountReport.campanhas.slice(0, 3).map(c =>
@@ -1038,6 +1073,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       const html = renderMetaReportHtml({
         cliente,
         periodo,
+        comparacao,
         campanhas: accountReport.campanhas,
         totais: { gasto: accountReport.totais.gasto, totalImpressions: totalImp, totalReach, totalCliques, avgCTR, avgCPM, avgFrequency },
         leitura,
