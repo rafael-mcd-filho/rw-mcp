@@ -536,22 +536,30 @@ export function buildAccountReport(
       (totaisPorCategoria[c.categoria] ?? 0) + c.resultado;
   }
 
-  // Mensagem formatada
-  const linhas = [`📊 *Relatório da conta — ${periodoLabel}*`, ``];
-  for (const c of campanhas) {
-    const custoStr = c.resultado > 0 ? moneyBR(c.custo) : "—";
-    linhas.push(
-      `${c.emoji} *${c.nome}*`,
-      `   ${moneyBR(c.gasto)} · ${c.headlineLabel}: ${intBR(c.resultado)} · ${c.costLabel}: ${custoStr}`
-    );
-  }
-  linhas.push(``, `*Total investido: ${moneyBR(totalGasto)}*`);
+  // Totais agregados para mensagem
+  const totalCliques = campanhas.reduce((s, c) => s + c.cliques, 0);
+  const totalImpressoes = campanhas.reduce((s, c) => s + c.impressoes, 0);
+  const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
+
   const leadsForm = totaisPorCategoria["lead_form"] ?? 0;
   const conversas = totaisPorCategoria["messages"] ?? 0;
-  const destaques: string[] = [];
-  if (leadsForm > 0) destaques.push(`Leads (formulário): ${intBR(leadsForm)}`);
-  if (conversas > 0) destaques.push(`Conversas (WhatsApp): ${intBR(conversas)}`);
-  if (destaques.length) linhas.push(destaques.join(" · "));
+  const gastoLeads = campanhas.filter(c => c.categoria === "lead_form").reduce((s, c) => s + c.gasto, 0);
+  const gastoConversas = campanhas.filter(c => c.categoria === "messages").reduce((s, c) => s + c.gasto, 0);
+  const cplMedio = leadsForm > 0 ? gastoLeads / leadsForm : 0;
+  const cpcConv = conversas > 0 ? gastoConversas / conversas : 0;
+
+  // Mensagem formatada (resumo geral)
+  const linhas = [
+    `📊 *Relatório Meta Ads — ${periodoLabel}*`,
+    ``,
+    `- Investimento: ${moneyBR(totalGasto)}`,
+  ];
+  if (leadsForm > 0) linhas.push(`- Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(cplMedio)}`);
+  if (conversas > 0) linhas.push(`- Conversas (WhatsApp): ${intBR(conversas)} · Custo/conversa: ${moneyBR(cpcConv)}`);
+  linhas.push(
+    `- Cliques: ${intBR(totalCliques)} · CTR: ${pctBR(avgCTR)}`,
+    `- Impressões: ${intBR(totalImpressoes)}`,
+  );
 
   return {
     periodo: periodoLabel,
