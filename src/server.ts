@@ -37,11 +37,13 @@ import {
   type IntegratedReport,
   type MetaAccountReportLike,
 } from "./google-report.js";
-import { renderGoogleReportHtml, type GoogleReportComparison } from "./google-pdf.js";
+import { renderGoogleReportHtml, renderGooglePagesFragment, GOOGLE_PDF_CSS, type GoogleReportComparison } from "./google-pdf.js";
 import {
   processMetaAdsets, processMetaAds, processMetaDemographics, buildMetaFunil, renderMetaReportHtml,
-  type MetaReportComparison, type TopCriativo,
+  renderMetaPagesFragment, META_PDF_CSS,
+  type MetaReportComparison, type TopCriativo, type MetaPdfParams,
 } from "./meta-pdf.js";
+import { renderIntegratedFullHtml } from "./pdf-template.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
@@ -1634,16 +1636,205 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
 
     server.tool(
       "generate_integrated_report_pdf",
-      "Gera relatório integrado com Meta Ads e Google Ads, resultados separados por canal. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
+      "Gera relatório integrado COMPLETO com Meta Ads e Google Ads — todas as páginas de cada canal (3 Google + 4 Meta) mais resumo consolidado e fechamento tático. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
       { ...INTEGRATED_SCHEMA, ...FORMATO_SCHEMA },
       async (args) => {
-        const payload = await buildIntegratedPayload(args as IntegratedArgs, true);
-        const model = buildIntegratedPdfModel({
-          report: payload.report,
-          metaDaily: payload.metaDaily,
-          googleDaily: payload.googleDaily,
-        });
-        return renderPdfToolResponse(model, payload.report.cliente, formatoFrom(args as { formato?: string; format?: string }));
+        const lookupName = clientNameLookup(args as Record<string, unknown>);
+        const record = lookupName && clientsConfigured() ? await findClient(lookupName) : undefined;
+        if (lookupName && clientsConfigured() && !record) {
+          throw new Error(`Cliente "${lookupName}" nao encontrado na base.`);
+        }
+        const clientName = clientNameFrom(args) ?? record?.nome_cliente ?? lookupName ?? "Relatório integrado";
+        const { since, until } = periodFrom(args);
+        const datePreset = datePresetFrom(args);
+        const periodLabel = periodLabelFrom(since, until, datePreset);
+        const iArgs = args as IntegratedArgs;
+        const wantsMeta = iArgs.incluir_meta ?? true;
+        const wantsGoogle = iArgs.incluir_google ?? true;
+        const metaAccountId = integratedMetaAccountId(iArgs, record);
+        const googleCustomerId = integratedGoogleCustomerId(iArgs, record);
+        const formato = formatoFrom(args as { formato?: string; format?: string });
+        const toI = (v: unknown) => parseInt(String(v ?? "0"), 10) || 0;
+        const toN = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
+
+        let metaReport: MetaAccountReportLike | undefined;
+        let metaAdsets: ReturnType<typeof processMetaAdsets> = [];
+        let metaAds: ReturnType<typeof processMetaAds> = [];
+        let metaDemographics: ReturnType<typeof processMetaDemographics> = { por_genero: [], por_faixa_etaria: [] };
+        let metaFunil: ReturnType<typeof buildMetaFunil> = { alcance: 0, cliques: 0, cliques_link: 0, meta_label: "", meta_valor: 0 };
+        let metaComparacao: MetaReportComparison | undefined;
+        let topCriativo: TopCriativo | undefined;
+        let metaTotaisExt = { totalImp: 0, totalReach: 0, totalCliques: 0, avgCTR: 0, avgCPM: 0, avgFrequency: 0 };
+
+        let googleReport: GoogleAdsEnhancedReport | undefined;
+        let googleAdGroups: Awaited<ReturnType<typeof getGoogleAdsAdGroups>> = [];
+        let googleConvActions: Awaited<ReturnType<typeof getGoogleAdsConversionActions>> = [];
+        let googleDemographics: Awaited<ReturnType<typeof getGoogleAdsDemographics>> = { por_genero: [], por_faixa_etaria: [] };
+        let googleComparacao: GoogleReportComparison | undefined;
+
+        if (wantsMeta && metaAccountId) {
+          const [accountRows, adsetRows, adRows, demoRows] = await Promise.all([
+            client.getInsights({ level: "campaign", since, until, datePreset, accountId: metaAccountId }),
+            client.getInsights({ level: "adset", since, until, datePreset, accountId: metaAccountId }).catch(() => []),
+            client.getInsights({ level: "ad", since, until, datePreset, accountId: metaAccountId }).catch(() => []),
+            client.getInsights({ level: "account", since, until, datePreset, accountId: metaAccountId, breakdowns: ["gender", "age"] }).catch(() => []),
+          ]);
+          metaReport = buildAccountReport(accountRows, periodLabel) as MetaAccountReportLike;
+          metaAdsets = processMetaAdsets(adsetRows);
+          metaAds = processMetaAds(adRows);
+          metaDemographics = processMetaDemographics(demoRows);
+          metaFunil = buildMetaFunil(metaAdsets, accountRows);
+          try {
+            const topAd = [...metaAds].filter((a) => a.gasto > 0).sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)[0];
+            if (topAd?.ad_id) {
+              const url = await client.getAdCreativeThumb(topAd.ad_id);
+              topCriativo = {
+                nome: topAd.nome,
+                conjunto: topAd.conjunto,
+                headlineLabel: topAd.headlineLabel,
+                resultado: topAd.resultado,
+                custo_resultado: topAd.custo_resultado,
+                gasto: topAd.gasto,
+                ctr: topAd.ctr,
+                preview: url ? await imageToDataUri(url) : null,
+              };
+            }
+          } catch { /* sem criativo */ }
+          let totalImp = 0, totalReach = 0, totalCliques = 0, totalFreqWeight = 0;
+          for (const r of accountRows) {
+            totalImp += toI(r.impressions);
+            totalReach += toI(r.reach ?? "0");
+            totalCliques += toI(r.clicks);
+            totalFreqWeight += toN(r.frequency ?? "0") * toI(r.reach ?? "0");
+          }
+          const avgCTR = totalImp > 0 ? (totalCliques / totalImp) * 100 : 0;
+          const avgCPM = totalImp > 0 ? (metaReport.totais.gasto / totalImp) * 1000 : 0;
+          const avgFrequency = totalReach > 0 ? totalFreqWeight / totalReach : 0;
+          metaTotaisExt = { totalImp, totalReach, totalCliques, avgCTR, avgCPM, avgFrequency };
+          const CONV_CATS = new Set(["lead_form", "messages", "sales"]);
+          const resultadoDe = (rep: typeof metaReport) =>
+            rep!.campanhas.reduce((s, c) => s + (CONV_CATS.has(c.categoria) ? c.resultado : 0), 0);
+          const prevMeta = smartPreviousPeriod(since, until);
+          if (prevMeta) {
+            try {
+              const prevRows = await client.getInsights({ level: "campaign", since: prevMeta.since, until: prevMeta.until, accountId: metaAccountId });
+              const prevReport = buildAccountReport(prevRows, `${prevMeta.since} a ${prevMeta.until}`);
+              if (prevReport.totais.gasto > 0) {
+                let pImp = 0, pClk = 0;
+                for (const r of prevRows) { pImp += toI(r.impressions); pClk += toI(r.clicks); }
+                const prevCtr = pImp > 0 ? (pClk / pImp) * 100 : 0;
+                const curRes = resultadoDe(metaReport);
+                const prevRes = resultadoDe(prevReport as typeof metaReport);
+                const delta = (a: number, b: number) => ({ atual: a, anterior: b, pct: b > 0 ? ((a - b) / b) * 100 : null });
+                const cpaOf = (g: number, res: number) => (res > 0 ? g / res : 0);
+                metaComparacao = {
+                  periodo_anterior: `${prevMeta.since} a ${prevMeta.until}`,
+                  resultado: delta(curRes, prevRes),
+                  cpa: delta(cpaOf(metaReport!.totais.gasto, curRes), cpaOf(prevReport.totais.gasto, prevRes)),
+                  ctr: delta(avgCTR, prevCtr),
+                  investimento: delta(metaReport!.totais.gasto, prevReport.totais.gasto),
+                };
+              }
+            } catch { /* sem comparação */ }
+          }
+        }
+
+        if (wantsGoogle && googleCustomerId) {
+          const niche = resolveNiche(record?.nicho, clientContexto(record)).niche;
+          const month = until ? Number(until.slice(5, 7)) || undefined : undefined;
+          const [rawGoogle, details, adGroups, convActions, demographics] = await Promise.all([
+            getGoogleAdsAccountReport(googleCustomerId, since, until, datePreset),
+            fetchGoogleDetails(googleCustomerId, since, until, datePreset, args, true),
+            getGoogleAdsAdGroups(googleCustomerId, since, until, datePreset).catch(() => []),
+            getGoogleAdsConversionActions(googleCustomerId, since, until, datePreset).catch(() => []),
+            getGoogleAdsDemographics(googleCustomerId, since, until, datePreset).catch(() => ({ por_genero: [], por_faixa_etaria: [] })),
+          ]);
+          googleReport = buildGoogleAdsReport(rawGoogle, { clientName, ...details, niche, month });
+          googleAdGroups = adGroups;
+          googleConvActions = convActions;
+          googleDemographics = demographics;
+          const prevGoogle = smartPreviousPeriod(since, until);
+          if (prevGoogle) {
+            try {
+              const prevReport = await getGoogleAdsAccountReport(googleCustomerId, prevGoogle.since, prevGoogle.until);
+              const pr = prevReport.resumo;
+              if (pr.gasto_total > 0 || pr.impressoes > 0) {
+                const cr = rawGoogle.resumo;
+                const delta = (a: number, b: number) => ({ atual: a, anterior: b, pct: b > 0 ? ((a - b) / b) * 100 : null });
+                googleComparacao = {
+                  periodo_anterior: `${prevGoogle.since} a ${prevGoogle.until}`,
+                  gasto: delta(cr.gasto_total, pr.gasto_total),
+                  conversoes: delta(cr.conversoes, pr.conversoes),
+                  cpa: delta(cr.custo_por_conversao, pr.custo_por_conversao),
+                  ctr: delta(cr.ctr, pr.ctr),
+                };
+              }
+            } catch { /* sem comparação */ }
+          }
+        }
+
+        if (!metaReport && !googleReport) {
+          throw new Error("Nao foi possivel montar o relatorio: informe nome_cliente com IDs cadastrados ou passe meta_account_id/google_customer_id.");
+        }
+
+        const integratedReport = buildIntegratedReport({ clientName, periodLabel, metaReport, googleReport });
+        const model = buildIntegratedPdfModel({ report: integratedReport });
+
+        let googleFragment = "";
+        let metaFragment = "";
+
+        if (googleReport) {
+          googleFragment = renderGooglePagesFragment(googleReport, {
+            adGroups: googleAdGroups,
+            conversionActions: googleConvActions,
+            demographics: googleDemographics,
+            comparacao: googleComparacao,
+          });
+        }
+
+        if (metaReport) {
+          const leitura = [
+            `Investimento total: ${moneyBR(metaReport.totais.gasto)} em ${metaReport.campanhas.filter(c => c.gasto > 0).length} campanhas ativas.`,
+            ...metaReport.campanhas.slice(0, 3).map(c =>
+              `${c.nome}: ${moneyBR(c.gasto)} · ${intBR(c.resultado)} ${c.headlineLabel.toLowerCase()} · ${c.resultado > 0 ? moneyBR(c.custo) : "sem conversões"}.`
+            ),
+          ];
+          const metaParams: MetaPdfParams = {
+            cliente: clientName,
+            periodo: periodLabel,
+            campanhas: metaReport.campanhas,
+            totais: {
+              gasto: metaReport.totais.gasto,
+              totalImpressions: metaTotaisExt.totalImp,
+              totalReach: metaTotaisExt.totalReach,
+              totalCliques: metaTotaisExt.totalCliques,
+              avgCTR: metaTotaisExt.avgCTR,
+              avgCPM: metaTotaisExt.avgCPM,
+              avgFrequency: metaTotaisExt.avgFrequency,
+            },
+            adsets: metaAdsets,
+            ads: metaAds,
+            demographics: metaDemographics,
+            funil: metaFunil,
+            leitura,
+            comparacao: metaComparacao,
+            topCriativo,
+            proximosPassos: [
+              "Revisar conjuntos com CPM acima de R$ 15 — pode indicar saturação de audiência.",
+              "Anúncios com frequência acima de 3,0 devem ser rotacionados ou pausados.",
+              "Confirmar no CRM se os resultados registrados na plataforma geram receita real.",
+            ],
+            notas: [
+              "Resultados (leads, conversas, compras) são os eventos configurados nas campanhas — valide com o CRM.",
+              "Cliques no link = inline_link_clicks, que exclui cliques no perfil e outras interações.",
+              "Dados demográficos são estimados pela Meta com base em comportamento e perfil — não são exatos.",
+            ],
+          };
+          metaFragment = renderMetaPagesFragment(metaParams);
+        }
+
+        const html = renderIntegratedFullHtml(model, googleFragment, metaFragment, GOOGLE_PDF_CSS + META_PDF_CSS);
+        return renderHtmlPdfToolResponse(html, clientName, formato);
       }
     );
 

@@ -385,3 +385,39 @@ export function renderPdfHtml(model: PdfReportModel): string {
 </body>
 </html>`;
 }
+
+/**
+ * Monta o HTML completo do relatório integrado com todas as páginas dos dois canais.
+ * @param model   Modelo de resumo consolidado (página 1 + fechamento)
+ * @param googleFragment  Divs de página do Google (de renderGooglePagesFragment)
+ * @param metaFragment    Divs de página do Meta (de renderMetaPagesFragment)
+ * @param extraCss        CSS adicional dos renderers individuais (GOOGLE_PDF_CSS + META_PDF_CSS)
+ */
+export function renderIntegratedFullHtml(
+  model: PdfReportModel,
+  googleFragment: string,
+  metaFragment: string,
+  extraCss: string
+): string {
+  const logo = logoDataUri();
+  const summary = pageOne(model, logo, 1);
+  const tactical = pageTactical(model, logo, 1, 1);
+  return `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(model.cliente)} - relatório combinado</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&display=swap" rel="stylesheet" />
+  <style>${BASE_REPORT_CSS}${extraCss}</style>
+</head>
+<body>
+  ${summary}
+  ${googleFragment}
+  ${metaFragment}
+  ${tactical}
+  <script>window.__READY__ = true;</script>
+</body>
+</html>`;
+}

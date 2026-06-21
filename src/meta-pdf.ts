@@ -205,7 +205,7 @@ export function buildMetaFunil(
 
 // ─── CSS adicional ─────────────────────────────────────────────────────────────
 
-const META_PDF_CSS = `
+export const META_PDF_CSS = `
 .funnel-wrap { margin: 12px 0 10px; display: flex; flex-direction: column; gap: 3px; align-items: center; }
 .funnel-step {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -628,6 +628,16 @@ export interface MetaPdfParams {
   ads: MetaAdRow[];
   demographics: MetaDemographics;
   funil: MetaFunil;
+}
+
+/** Retorna apenas os divs de página (sem wrapper HTML) para uso no relatório integrado. */
+export function renderMetaPagesFragment(p: MetaPdfParams): string {
+  return [
+    page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura, p.comparacao),
+    page2(p.cliente, p.periodo, p.adsets),
+    page3(p.cliente, p.periodo, p.ads, p.topCriativo),
+    page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas),
+  ].join("\n");
 }
 
 export function renderMetaReportHtml(p: MetaPdfParams): string {

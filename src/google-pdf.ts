@@ -31,7 +31,7 @@ function cpa(gasto: number, conv: number): string {
 
 // ─── CSS adicional do Google PDF ──────────────────────────────────────────────
 
-const GOOGLE_PDF_CSS = `
+export const GOOGLE_PDF_CSS = `
 .g-badge {
   display: inline-block;
   padding: 2px 7px;
@@ -498,4 +498,19 @@ ${p3}
 <script>window.__READY__ = true;</script>
 </body>
 </html>`;
+}
+
+/** Retorna apenas os divs de página (sem wrapper HTML) para uso no relatório integrado. */
+export function renderGooglePagesFragment(
+  report: GoogleAdsEnhancedReport,
+  opts: GooglePdfOptions = {}
+): string {
+  const adGroups = opts.adGroups ?? [];
+  const convActions = opts.conversionActions ?? [];
+  const demographics = opts.demographics ?? { por_genero: [], por_faixa_etaria: [] };
+  return [
+    page1(report, opts.comparacao),
+    page2(report, adGroups),
+    page3(report, convActions, demographics),
+  ].join("\n");
 }
