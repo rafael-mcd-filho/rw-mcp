@@ -280,7 +280,6 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
     <td class="num">${int(k.conversoes)}</td>
     <td class="num">${cpa(k.gasto, k.conversoes)}</td>
     <td class="num">${pct(k.ctr)}</td>
-    <td class="num">${qsPill(k.quality_score)}</td>
   </tr>`).join("");
 
   const kwTable = `<table class="table compact-table">
@@ -291,9 +290,8 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
       <th class="num">Conv.</th>
       <th class="num">CPA</th>
       <th class="num">CTR</th>
-      <th class="num">QS</th>
     </tr></thead>
-    <tbody>${kwRows || '<tr><td colspan="7">Sem keywords no período.</td></tr>'}</tbody>
+    <tbody>${kwRows || '<tr><td colspan="6">Sem keywords no período.</td></tr>'}</tbody>
   </table>`;
 
   // Search terms section (top by gasto)
