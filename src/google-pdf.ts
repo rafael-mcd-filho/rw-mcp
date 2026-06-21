@@ -58,9 +58,9 @@ const GOOGLE_PDF_CSS = `
   font-size: 9px;
   font-weight: 700;
 }
-.qs-hi  { background: #dcfce7; color: #15803d; }
-.qs-mid { background: #fef3c7; color: #92400e; }
-.qs-lo  { background: #fee2e2; color: #b91c1c; }
+.qs-hi  { background: #16a34a; color: #fff; }
+.qs-mid { background: #d97706; color: #fff; }
+.qs-lo  { background: #dc2626; color: #fff; }
 .demog-section { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin-top: 10px; }
 .demog-block h4 { font-size: 10px; text-transform: uppercase; color: #667085; margin: 0 0 8px; font-weight: 750; letter-spacing: .4px; }
 .demog-table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
@@ -199,8 +199,14 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
         `<div class="insight"><span class="dot"></span><span>${esc(l)}</span></div>`).join("")}</div>`
     : "";
 
-  // Campanhas table
-  const camps = [...report.campanhas].sort((a, b) => b.gasto - a.gasto);
+  // Campanhas table — exclui pausadas/removidas sem entrega no período
+  const camps = [...report.campanhas]
+    .filter(c => {
+      const st = (c.status ?? "").toUpperCase();
+      const inativo = st === "PAUSED" || st === "REMOVED";
+      return !inativo || c.gasto > 0 || c.impressoes > 0;
+    })
+    .sort((a, b) => b.gasto - a.gasto);
   const campRows = camps.slice(0, 10).map(c => `<tr>
     <td><strong>${esc(c.nome)}</strong><span>${esc(c.tipo || "")}</span></td>
     <td class="num">${money(c.gasto)}</td>
@@ -441,7 +447,6 @@ function page3(
     ${header(report.cliente ?? "Cliente", report.periodo, "Google Ads · Conversões e Demográficos")}
     ${convSection}
     ${demoSection}
-    ${stepsSection}
     ${notesSection}
     ${footer(report.cliente ?? "Cliente", report.periodo, 3, 3)}
   </div>`;

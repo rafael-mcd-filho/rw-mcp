@@ -180,13 +180,6 @@ function buildGoogleRead(report: GAccountReport, options: GoogleReportOptions = 
     );
   }
 
-  const term = wasteSearchTerm(options.searchTerms);
-  if (term) {
-    lines.push(
-      `Termo de pesquisa para revisar: "${term.termo}" consumiu ${moneyBR(term.gasto)} sem conversão registrada.`
-    );
-  }
-
   if (!lines.length) {
     lines.push("Não houve entrega suficiente para uma leitura consolidada do Google Ads no período.");
   }
