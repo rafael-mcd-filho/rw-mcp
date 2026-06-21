@@ -25,6 +25,7 @@ export interface GateCampaign {
   custo_por_conversao: number;
   frequencia?: number;
   parcela_impressoes?: number | null; // Google, %, null = N/A
+  rankings?: { quality?: string; engagementRate?: string; conversionRate?: string }; // Meta
   status?: string;
 }
 
@@ -316,6 +317,39 @@ function gatePixel(s: AccountSnapshot): GateOutcome {
 }
 
 /** Roda todos os gates aplicáveis e devolve checks (nota) + alertas (ação). */
+const isBelow = (r?: string): boolean => !!r && r.startsWith("BELOW_AVERAGE");
+
+/** Meta: sinaliza campanhas com classificação de qualidade abaixo da média (relevância no leilão). */
+function gateMetaQualityRanking(s: AccountSnapshot): GateOutcome {
+  if (s.platform !== "meta") {
+    return { check: { id: "meta-quality-ranking", category: "Criativo", severity: "MEDIO", status: "DADOS_INSUFICIENTES" }, alerts: [] };
+  }
+  const threshold = Math.max(20, s.resumo.gasto * 0.05);
+  const offenders = s.campanhas.filter((c) => c.gasto >= threshold && isBelow(c.rankings?.quality));
+  if (!offenders.length) {
+    const temDados = s.campanhas.some((c) => c.rankings?.quality && c.rankings.quality !== "UNKNOWN");
+    return { check: { id: "meta-quality-ranking", category: "Criativo", severity: "MEDIO", status: temDados ? "PASS" : "DADOS_INSUFICIENTES" }, alerts: [] };
+  }
+  const alerts: Alert[] = offenders.map((c) => {
+    const dims: string[] = [];
+    if (isBelow(c.rankings?.quality)) dims.push("qualidade");
+    if (isBelow(c.rankings?.engagementRate)) dims.push("engajamento");
+    if (isBelow(c.rankings?.conversionRate)) dims.push("conversão");
+    return {
+      id: `meta-quality-ranking:${c.id}`,
+      title: "Anúncio com qualidade abaixo da média",
+      severity: "MEDIO",
+      status: "FAIL",
+      channel: s.channel,
+      category: "Criativo",
+      entityName: c.nome,
+      evidence: `${c.nome}: ${dims.join("/")} abaixo da média (Meta) com ${moneyBR(c.gasto)} investidos.`,
+      recommendation: "Renovar criativo/segmentação — anúncio penalizado no leilão por relevância.",
+    };
+  });
+  return { check: { id: "meta-quality-ranking", category: "Criativo", severity: "MEDIO", status: "FAIL" }, alerts };
+}
+
 export function runQualityGates(s: AccountSnapshot): { checks: HealthCheck[]; alerts: Alert[] } {
   const outcomes: GateOutcome[] = [
     gateGastoSemConversao(s),
@@ -327,6 +361,7 @@ export function runQualityGates(s: AccountSnapshot): { checks: HealthCheck[]; al
     gateQualityScore(s),
     gateImpressionShare(s),
     gateCampanhaSemImpressoes(s),
+    gateMetaQualityRanking(s),
     gatePixel(s),
   ];
   return {

@@ -176,6 +176,7 @@ interface MetaCampaignRow {
   ctr: number;
   cpc: number;
   frequencia: number;
+  rankings?: { quality?: string; engagementRate?: string; conversionRate?: string };
 }
 interface MetaAccountReportLike {
   totais: { gasto: number };
@@ -209,6 +210,7 @@ export function metaSnapshot(
       cpc_medio: c.cpc,
       custo_por_conversao: c.custo,
       frequencia: c.frequencia,
+      rankings: c.rankings,
     };
   });
 
