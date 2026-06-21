@@ -157,7 +157,7 @@ function objectiveColumns(): TableColumn<ObjectiveRow>[] {
   ];
 }
 
-function pageOne(model: PdfReportModel, logo: string | null): string {
+function pageOne(model: PdfReportModel, logo: string | null, total: number): string {
   const objectiveTable = renderTable(model.objetivos, objectiveColumns());
   const campaigns = model.campanhas.slice(0, 4);
   const topCampaigns = renderTable(campaigns, campaignColumns(true), true);
@@ -172,7 +172,7 @@ function pageOne(model: PdfReportModel, logo: string | null): string {
   return renderPage(
     model,
     1,
-    3,
+    total,
     `<div class="hero">
       <h1>Check-in de performance</h1>
       <p class="lead">Leitura consolidada das campanhas de ${escapeHtml(channels)} no período, com resultados separados por canal, investimento e custo por ação.</p>
@@ -202,30 +202,35 @@ function pageOne(model: PdfReportModel, logo: string | null): string {
   );
 }
 
-function pageTwo(model: PdfReportModel, logo: string | null): string {
-  const main = model.objetivoPrincipal;
-  const campaigns = main
-    ? model.campanhas.filter((campaign) => campaign.categoria === main.category)
-    : model.campanhas;
-  const topCampaigns = campaigns.slice(0, 5);
+import type { PdfObjectiveSummary, PdfCampaignRow } from "./report.js";
 
-  const metricCards: MetricCard[] = main
+function renderChannelPage(
+  model: PdfReportModel,
+  pageNum: number,
+  total: number,
+  objective: PdfObjectiveSummary | null,
+  channelCampaigns: PdfCampaignRow[],
+  logo: string | null
+): string {
+  const topCampaigns = channelCampaigns.slice(0, 5);
+
+  const metricCards: MetricCard[] = objective
     ? [
-        { label: main.headlineLabel, value: intBR(main.resultado), tone: "red" },
-        { label: "Investimento", value: moneyBR(main.gasto) },
+        { label: objective.headlineLabel, value: intBR(objective.resultado), tone: "red" },
+        { label: "Investimento", value: moneyBR(objective.gasto) },
         {
-          label: main.costLabel,
-          value: main.resultado > 0 ? moneyBR(main.custo) : "-",
+          label: objective.costLabel,
+          value: objective.resultado > 0 ? moneyBR(objective.custo) : "-",
           tone: "red",
         },
-        { label: "CPC médio", value: moneyBR(main.cpc) },
-        { label: "CTR", value: pctBR(main.ctr) },
-        { label: "Frequência", value: main.frequencia > 0 ? main.frequencia.toFixed(2) : "-" },
-        { label: "CPM", value: moneyBR(main.cpm) },
-        { label: "Cliques", value: intBR(main.cliques) },
-        main.roas > 0
-          ? { label: "ROAS", value: main.roas.toFixed(2), tone: "red" }
-          : { label: "Alcance", value: intBR(main.alcance) },
+        { label: "CPC médio", value: moneyBR(objective.cpc) },
+        { label: "CTR", value: pctBR(objective.ctr) },
+        { label: "Frequência", value: objective.frequencia > 0 ? objective.frequencia.toFixed(2) : "-" },
+        { label: "CPM", value: moneyBR(objective.cpm) },
+        { label: "Cliques", value: intBR(objective.cliques) },
+        objective.roas > 0
+          ? { label: "ROAS", value: objective.roas.toFixed(2), tone: "red" }
+          : { label: "Alcance", value: intBR(objective.alcance) },
       ]
     : [];
 
@@ -246,15 +251,15 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
       negative: true,
     }));
 
-  const title = main ? main.label : "Objetivo principal";
-  const paragraph = main
-    ? `${main.label} foi o principal recorte do período por investimento. A leitura abaixo separa volume, custo e eficiência das campanhas desse objetivo.`
-    : "Sem objetivo dominante no período analisado.";
+  const title = objective ? objective.label : "Canal";
+  const paragraph = objective
+    ? `${objective.label} — leitura detalhada de volume, custo e eficiência das campanhas no período.`
+    : "Sem dados disponíveis para este canal no período.";
 
   return renderPage(
     model,
-    2,
-    3,
+    pageNum,
+    total,
     `<div class="p2-body">
     <section class="section">
       <h2>${escapeHtml(title)}</h2>
@@ -262,7 +267,7 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
       ${renderMetricGrid(metricCards)}
     </section>
     <section class="section">
-      <h2>Campanhas do objetivo principal</h2>
+      <h2>Campanhas do canal</h2>
       ${renderTable(topCampaigns, campaignColumns(), true)}
     </section>
     <div class="two-col">
@@ -282,7 +287,7 @@ function pageTwo(model: PdfReportModel, logo: string | null): string {
   );
 }
 
-function pageThree(model: PdfReportModel, logo: string | null): string {
+function pageTactical(model: PdfReportModel, logo: string | null, pageNum: number, total: number): string {
   const dailyBars: BarItem[] = model.serieDiaria.slice(-6).map((day) => ({
     label: day.data,
     value: day.gasto,
@@ -299,8 +304,8 @@ function pageThree(model: PdfReportModel, logo: string | null): string {
 
   return renderPage(
     model,
-    3,
-    3,
+    pageNum,
+    total,
     `<section class="section">
       <h2>Fechamento tático</h2>
       <p>Resumo compacto para orientar ajustes de verba, leitura de fonte e próximos passos do período seguinte.</p>
@@ -333,6 +338,37 @@ function pageThree(model: PdfReportModel, logo: string | null): string {
 
 export function renderPdfHtml(model: PdfReportModel): string {
   const logo = logoDataUri();
+
+  let pages: string;
+  if (model.kind === "integrated") {
+    // 4 páginas: resumo → Meta → Google → fechamento tático
+    const metaObjective = model.objetivos.find((o) => o.category === "meta_ads") ?? null;
+    const googleObjective = model.objetivos.find((o) => o.category === "google_ads") ?? null;
+    const metaCampaigns = model.campanhas.filter((c) => c.categoria === "meta_ads");
+    const googleCampaigns = model.campanhas.filter((c) => c.categoria === "google_ads");
+    const hasGoogle = googleObjective !== null;
+    const hasMeta = metaObjective !== null;
+    const total = 2 + (hasMeta ? 1 : 0) + (hasGoogle ? 1 : 0);
+    let pageNum = 1;
+    pages = [
+      pageOne(model, logo, total),
+      ...(hasMeta ? [renderChannelPage(model, ++pageNum, total, metaObjective, metaCampaigns, logo)] : []),
+      ...(hasGoogle ? [renderChannelPage(model, ++pageNum, total, googleObjective, googleCampaigns, logo)] : []),
+      pageTactical(model, logo, ++pageNum, total),
+    ].join("\n");
+  } else {
+    // Layout padrão 3 páginas
+    const main = model.objetivoPrincipal;
+    const channelCampaigns = main
+      ? model.campanhas.filter((c) => c.categoria === main.category)
+      : model.campanhas;
+    pages = [
+      pageOne(model, logo, 3),
+      renderChannelPage(model, 2, 3, main, channelCampaigns, logo),
+      pageTactical(model, logo, 3, 3),
+    ].join("\n");
+  }
+
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -344,9 +380,7 @@ export function renderPdfHtml(model: PdfReportModel): string {
   <style>${BASE_REPORT_CSS}</style>
 </head>
 <body>
-  ${pageOne(model, logo)}
-  ${pageTwo(model, logo)}
-  ${pageThree(model, logo)}
+  ${pages}
   <script>window.__READY__ = true;</script>
 </body>
 </html>`;
