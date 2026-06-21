@@ -580,7 +580,6 @@ function page4(
       ${sectionTitle("Impressões e Alcance por Segmento")}
       ${demoSection}
     </div>
-    ${stepsSection}
     ${notasSection}
     ${pageFooter(cliente, periodo, 4, 4)}
   </div>`;
