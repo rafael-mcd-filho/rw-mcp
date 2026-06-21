@@ -401,7 +401,6 @@ export function renderIntegratedFullHtml(
 ): string {
   const logo = logoDataUri();
   const summary = pageOne(model, logo, 1);
-  const tactical = pageTactical(model, logo, 1, 1);
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -416,7 +415,6 @@ export function renderIntegratedFullHtml(
   ${summary}
   ${googleFragment}
   ${metaFragment}
-  ${tactical}
   <script>window.__READY__ = true;</script>
 </body>
 </html>`;
