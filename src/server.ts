@@ -1143,7 +1143,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
   server.tool(
     "send_whatsapp_message",
-    "Envia mensagem de texto via WhatsApp usando a Evolution API. Use APENAS após o usuário aprovar a mensagem no chat.",
+    "Envia apenas texto via WhatsApp (sem arquivo). Use somente quando NÃO houver PDF para enviar junto.",
     {
       phone: z.string().describe("Número do destinatário com DDI+DDD, só dígitos (ex: 5583999999999)."),
       message: z.string().describe("Texto completo da mensagem a enviar."),
@@ -1173,13 +1173,13 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
   );
 
   server.tool(
-    "send_whatsapp_document",
-    "Envia um arquivo PDF (ou outro documento) via WhatsApp usando a Evolution API. Passe a URL pública do arquivo e o nome que o destinatário verá. Use APENAS após aprovação do usuário.",
+    "send_whatsapp_report",
+    "Envia relatório via WhatsApp em UMA única mensagem: o PDF chega como arquivo e o texto do relatório vai como legenda. Use SEMPRE que houver PDF para enviar — nunca chame send_whatsapp_message separado antes deste.",
     {
-      phone: z.string().describe("Número do destinatário com DDI+DDD, só dígitos (ex: 5583999999999)."),
-      document_url: z.string().describe("URL pública do arquivo a enviar (ex: link do Vercel Blob)."),
-      filename: z.string().describe("Nome do arquivo que aparecerá no WhatsApp (ex: relatorio-cao-sabido.pdf)."),
-      caption: z.string().optional().describe("Legenda/texto que acompanha o arquivo (opcional)."),
+      phone: z.string().describe("Número do destinatário com DDI+DDD, só dígitos (ex: 5584996463570)."),
+      message: z.string().describe("Texto completo da mensagem (métricas + resumo). Vai como legenda do arquivo."),
+      document_url: z.string().describe("URL pública do PDF gerado (link do Vercel Blob)."),
+      filename: z.string().describe("Nome do arquivo que aparece no WhatsApp (ex: relatorio-cao-sabido-junho.pdf)."),
     },
     async (args) => {
       const baseUrl = (process.env.EVOLUTION_URL ?? "https://evolution.rwsolucoesdigitais.com").replace(/\/$/, "");
@@ -1195,7 +1195,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
           mediatype: "document",
           media: args.document_url,
           fileName: args.filename,
-          caption: args.caption ?? "",
+          caption: args.message,
         }),
       });
 
