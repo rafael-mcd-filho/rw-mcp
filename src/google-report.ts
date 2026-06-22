@@ -851,13 +851,25 @@ function buildIntegratedMessage(report: IntegratedReport): string {
     const totalImpressoes = meta.campanhas.reduce((s, c) => s + (c.impressoes ?? 0), 0);
     const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
     const avgCPC = totalCliques > 0 ? report.totais.investimento_meta / totalCliques : 0;
-    const leadsForm = meta.totais.por_categoria["lead_form"] ?? 0;
-    const conversas = meta.totais.por_categoria["messages"] ?? 0;
-    const gastoLeads = meta.campanhas.filter(c => c.categoria === "lead_form").reduce((s, c) => s + c.gasto, 0);
-    const gastoConv = meta.campanhas.filter(c => c.categoria === "messages").reduce((s, c) => s + c.gasto, 0);
+
+    const CONV_CATS = ["lead_form", "messages", "sales"] as const;
+    type ConvCat = typeof CONV_CATS[number];
+    const CONV_EMOJI: Record<ConvCat, string> = { lead_form: "📋", messages: "💬", sales: "🛒" };
+    const CONV_LABEL: Record<ConvCat, string> = { lead_form: "Leads", messages: "Conversas", sales: "Vendas" };
+    const CONV_COST: Record<ConvCat, string> = { lead_form: "CPL", messages: "Custo/conversa", sales: "CPA" };
+
+    const convSummary = CONV_CATS.map(cat => ({
+      cat,
+      resultado: meta.totais.por_categoria[cat] ?? 0,
+      gasto: meta.campanhas.filter(c => c.categoria === cat).reduce((s, c) => s + c.gasto, 0),
+    }))
+      .filter(d => d.resultado > 0)
+      .sort((a, b) => b.gasto - a.gasto);
+
     lines.push(``, ``, `📱 *Meta Ads — ${moneyBR(report.totais.investimento_meta)}*`);
-    if (leadsForm > 0) lines.push(`🎯 Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(gastoLeads / leadsForm)}`);
-    if (conversas > 0) lines.push(`💬 Conversas: ${intBR(conversas)} · Custo/conversa: ${moneyBR(gastoConv / conversas)}`);
+    for (const d of convSummary) {
+      lines.push(`${CONV_EMOJI[d.cat]} ${CONV_LABEL[d.cat]}: ${intBR(d.resultado)} · ${CONV_COST[d.cat]}: ${moneyBR(d.gasto / d.resultado)}`);
+    }
     lines.push(
       `🖱️ Cliques: ${intBR(totalCliques)}`,
       `📈 CTR: ${pctBR(avgCTR)}`,

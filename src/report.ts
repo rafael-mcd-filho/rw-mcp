@@ -550,12 +550,20 @@ export function buildAccountReport(
   const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
   const avgCPC = totalCliques > 0 ? totalGasto / totalCliques : 0;
 
-  const leadsForm = totaisPorCategoria["lead_form"] ?? 0;
-  const conversas = totaisPorCategoria["messages"] ?? 0;
-  const gastoLeads = campanhas.filter(c => c.categoria === "lead_form").reduce((s, c) => s + c.gasto, 0);
-  const gastoConversas = campanhas.filter(c => c.categoria === "messages").reduce((s, c) => s + c.gasto, 0);
-  const cplMedio = leadsForm > 0 ? gastoLeads / leadsForm : 0;
-  const cpcConv = conversas > 0 ? gastoConversas / conversas : 0;
+  // Conversões por categoria — ordena por gasto para o principal da conta vir primeiro
+  const CONV_CATS = ["lead_form", "messages", "sales"] as const;
+  type ConvCat = typeof CONV_CATS[number];
+  const CONV_EMOJI: Record<ConvCat, string> = { lead_form: "📋", messages: "💬", sales: "🛒" };
+  const CONV_LABEL: Record<ConvCat, string> = { lead_form: "Leads", messages: "Conversas", sales: "Vendas" };
+  const CONV_COST: Record<ConvCat, string> = { lead_form: "CPL", messages: "Custo/conversa", sales: "CPA" };
+
+  const convSummary = CONV_CATS.map(cat => ({
+    cat,
+    resultado: totaisPorCategoria[cat] ?? 0,
+    gasto: campanhas.filter(c => c.categoria === cat).reduce((s, c) => s + c.gasto, 0),
+  }))
+    .filter(d => d.resultado > 0)
+    .sort((a, b) => b.gasto - a.gasto);
 
   const periodoFmt = periodoMsgFmt(periodoLabel);
   const header = clientName
@@ -572,8 +580,12 @@ export function buildAccountReport(
     ``,
     `💰 Investimento: ${moneyBR(totalGasto)}`,
   ];
-  if (leadsForm > 0) linhas.push(`🎯 Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(cplMedio)}`);
-  if (conversas > 0) linhas.push(`💬 Conversas: ${intBR(conversas)} · Custo/conversa: ${moneyBR(cpcConv)}`);
+
+  for (const d of convSummary) {
+    const cpa = d.gasto / d.resultado;
+    linhas.push(`${CONV_EMOJI[d.cat]} ${CONV_LABEL[d.cat]}: ${intBR(d.resultado)} · ${CONV_COST[d.cat]}: ${moneyBR(cpa)}`);
+  }
+
   linhas.push(
     `🖱️ Cliques: ${intBR(totalCliques)}`,
     `📈 CTR: ${pctBR(avgCTR)}`,
