@@ -9,6 +9,8 @@ export interface ClientRecord {
   contexto?: string;
   /** Nicho classificado pela IA do n8n (rótulo, ex.: "Farmácia"). Fonte preferida do benchmark. */
   nicho?: string;
+  /** Controle de envio de relatório: "ATIVO" = envia, "DESATIVADO" = não envia. */
+  Relatorio?: string;
 }
 
 /** Lê o contexto do cliente aceitando os dois nomes de campo (contexto | contexto_cliente). */

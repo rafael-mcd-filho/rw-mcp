@@ -606,7 +606,8 @@ async function qaPdfToolResponse(model: PdfReportModel) {
 async function renderHtmlPdfToolResponse(
   html: string,
   clientName: string,
-  formato: "pdf" | "html" = "pdf"
+  formato: "pdf" | "html" = "pdf",
+  whatsappText?: string
 ) {
   const slug = clientName
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -650,7 +651,8 @@ async function renderHtmlPdfToolResponse(
     const result = await put(`relatorios/relatorio-${slug}-${stamp}.pdf`, buffer, {
       access: "public", token: blobToken, contentType: "application/pdf", addRandomSuffix: true,
     });
-    return { content: [{ type: "text" as const, text: `PDF gerado (${pageCount} páginas):\n${result.url}` }] };
+    const suffix = whatsappText ? `\n\n---MSG_WHATSAPP---\n${whatsappText}` : "";
+    return { content: [{ type: "text" as const, text: `PDF gerado (${pageCount} páginas):\n${result.url}${suffix}` }] };
   }
 
   const result = await pdfLib.saveHtmlPdf(html, clientName);
@@ -1122,7 +1124,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         demographics,
         funil,
       });
-      return renderHtmlPdfToolResponse(html, cliente, formato);
+      return renderHtmlPdfToolResponse(html, cliente, formato, accountReport.mensagem);
     }
   );
 
@@ -1668,7 +1670,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         }
 
         const html = renderGoogleReportHtml(report, { adGroups, conversionActions: convActions, demographics, dailyRows, comparacao });
-        return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args));
+        return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args), report.mensagem);
       }
     );
 
@@ -1906,7 +1908,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         }
 
         const html = renderIntegratedFullHtml(model, googleFragment, metaFragment, GOOGLE_PDF_CSS + META_PDF_CSS);
-        return renderHtmlPdfToolResponse(html, clientName, formato);
+        return renderHtmlPdfToolResponse(html, clientName, formato, integratedReport.mensagem);
       }
     );
 
