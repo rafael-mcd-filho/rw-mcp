@@ -483,6 +483,13 @@ function campaignResult(config: CategoryConfig, a: Aggregated) {
   return { valor: a.totalConversoes, custo: a.cpa };
 }
 
+function periodoMsgFmt(label: string): string {
+  const m = label.match(/(\d{4})-(\d{2})-(\d{2})\s+a\s+(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return label;
+  const [, , sm, sd, ey, em, ed] = m;
+  return `${sd}/${sm} a ${ed}/${em}/${ey}`;
+}
+
 /**
  * Recebe as linhas de insights ao nível de campanha (uma por campanha) da conta
  * inteira e devolve um resumo consolidado: cada campanha com seu objetivo
@@ -490,7 +497,8 @@ function campaignResult(config: CategoryConfig, a: Aggregated) {
  */
 export function buildAccountReport(
   rows: Insight[],
-  periodoLabel: string
+  periodoLabel: string,
+  clientName?: string
 ) {
   const campanhas = rows.map((r) => {
     const config = detectCategory(r.campaign_name ?? "", r.objective);
@@ -540,6 +548,7 @@ export function buildAccountReport(
   const totalCliques = campanhas.reduce((s, c) => s + c.cliques, 0);
   const totalImpressoes = campanhas.reduce((s, c) => s + c.impressoes, 0);
   const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
+  const avgCPC = totalCliques > 0 ? totalGasto / totalCliques : 0;
 
   const leadsForm = totaisPorCategoria["lead_form"] ?? 0;
   const conversas = totaisPorCategoria["messages"] ?? 0;
@@ -548,17 +557,32 @@ export function buildAccountReport(
   const cplMedio = leadsForm > 0 ? gastoLeads / leadsForm : 0;
   const cpcConv = conversas > 0 ? gastoConversas / conversas : 0;
 
-  // Mensagem formatada (resumo geral)
+  const periodoFmt = periodoMsgFmt(periodoLabel);
+  const header = clientName
+    ? `📊 *Relatório de Tráfego — ${clientName} — ${periodoFmt}*`
+    : `📊 *Relatório Meta Ads — ${periodoFmt}*`;
+
   const linhas = [
-    `📊 *Relatório Meta Ads — ${periodoLabel}*`,
+    header,
     ``,
-    `- Investimento: ${moneyBR(totalGasto)}`,
+    ``,
+    `📍 Canal: Meta Ads`,
+    `📅 Período: ${periodoFmt}`,
+    ``,
+    ``,
+    `💰 Investimento: ${moneyBR(totalGasto)}`,
   ];
-  if (leadsForm > 0) linhas.push(`- Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(cplMedio)}`);
-  if (conversas > 0) linhas.push(`- Conversas (WhatsApp): ${intBR(conversas)} · Custo/conversa: ${moneyBR(cpcConv)}`);
+  if (leadsForm > 0) linhas.push(`🎯 Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(cplMedio)}`);
+  if (conversas > 0) linhas.push(`💬 Conversas: ${intBR(conversas)} · Custo/conversa: ${moneyBR(cpcConv)}`);
   linhas.push(
-    `- Cliques: ${intBR(totalCliques)} · CTR: ${pctBR(avgCTR)}`,
-    `- Impressões: ${intBR(totalImpressoes)}`,
+    `🖱️ Cliques: ${intBR(totalCliques)}`,
+    `📈 CTR: ${pctBR(avgCTR)}`,
+    `💵 CPC médio: ${moneyBR(avgCPC)}`,
+    `👀 Impressões: ${intBR(totalImpressoes)}`,
+    ``,
+    ``,
+    `✅ Resumo:`,
+    `[IA]`,
   );
 
   return {

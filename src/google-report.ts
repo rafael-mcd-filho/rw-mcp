@@ -10,7 +10,7 @@ import type {
   PdfObjectiveSummary,
   PdfReportModel,
 } from "./report.js";
-import { round2, moneyBR, intBR, pctBR, dateBR, sortKeyFromBR } from "./format.js";
+import { round2, moneyBR, intBR, pctBR, dateBR, sortKeyFromBR, periodoMsgFmt } from "./format.js";
 import { classifyMetric } from "./intelligence/benchmarks.js";
 import type { BenchmarkNiche, BenchmarkResult } from "./intelligence/types.js";
 
@@ -251,57 +251,35 @@ function buildGoogleOpportunities(report: GAccountReport, options: GoogleReportO
 
 function buildGoogleMessage(report: GoogleAdsEnhancedReport): string {
   const name = report.cliente ?? report.conta_id;
+  const periodoFmt = periodoMsgFmt(report.periodo);
+  const r = report.resumo;
+
   const lines = [
-    `*Relatório Google Ads - ${name}*`,
-    `Período: ${report.periodo}`,
-    "",
-    `- Investimento: ${moneyBR(report.resumo.gasto_total)}`,
-    `- Conversões: ${intBR(report.resumo.conversoes)}`,
-    `- CPA médio: ${report.resumo.conversoes > 0 ? moneyBR(report.resumo.custo_por_conversao) : "-"}`,
-    `- Cliques: ${intBR(report.resumo.cliques)}`,
-    `- CTR médio: ${pctBR(report.resumo.ctr)}`,
-    `- CPC médio: ${moneyBR(report.resumo.cpc_medio)}`,
-    `- Impressões: ${intBR(report.resumo.impressoes)}`,
+    `📊 *Relatório de Tráfego — ${name} — ${periodoFmt}*`,
+    ``,
+    ``,
+    `📍 Canal: Google Ads`,
+    `📅 Período: ${periodoFmt}`,
+    ``,
+    ``,
+    `💰 Investimento: ${moneyBR(r.gasto_total)}`,
   ];
 
-  const topCampaigns = bySpendDesc(report.campanhas)
-    .filter((c) => c.gasto > 0)
-    .slice(0, 5);
-
-  if (topCampaigns.length) {
-    lines.push("", "*Campanhas principais*");
-    for (const c of topCampaigns) {
-      const cpa = c.conversoes > 0 ? moneyBR(c.custo_por_conversao) : "-";
-      lines.push(
-        `- ${c.nome}: ${moneyBR(c.gasto)} | ${intBR(c.conversoes)} conv. | CPA ${cpa} | CTR ${pctBR(c.ctr)}`
-      );
-    }
+  if (r.conversoes > 0) {
+    lines.push(`🎯 Conversões: ${intBR(r.conversoes)}`);
+    lines.push(`📉 CPA médio: ${moneyBR(r.custo_por_conversao)}`);
   }
 
-  if (report.keywords?.length) {
-    lines.push("", "*Keywords em destaque*");
-    for (const k of report.keywords.slice(0, 3)) {
-      const cpa = k.conversoes > 0 ? moneyBR(k.custo_por_conversao) : "-";
-      lines.push(
-        `- ${k.keyword}: ${moneyBR(k.gasto)} | ${intBR(k.conversoes)} conv. | CPA ${cpa}`
-      );
-    }
-  }
-
-  if (report.termos_pesquisa?.length) {
-    lines.push("", "*Termos de pesquisa*");
-    for (const t of report.termos_pesquisa.slice(0, 3)) {
-      lines.push(
-        `- ${t.termo}: ${moneyBR(t.gasto)} | ${intBR(t.cliques)} cliques | ${intBR(t.conversoes)} conv.`
-      );
-    }
-  }
-
-  if (report.analise_benchmark?.length) {
-    lines.push("", "*Benchmark*", report.analise_benchmark.map((b) => `${b.label}: ${b.level}`).join(" · "));
-  }
-
-  lines.push("", "*Leitura*", ...report.leitura_executiva.map((line) => `- ${line}`));
+  lines.push(
+    `🖱️ Cliques: ${intBR(r.cliques)}`,
+    `📈 CTR: ${pctBR(r.ctr)}`,
+    `💵 CPC médio: ${moneyBR(r.cpc_medio)}`,
+    `👀 Impressões: ${intBR(r.impressoes)}`,
+    ``,
+    ``,
+    `✅ Resumo:`,
+    `[IA]`,
+  );
 
   return lines.join("\n");
 }
@@ -858,11 +836,13 @@ function metaPlatformResults(report?: MetaAccountReportLike): number {
 }
 
 function buildIntegratedMessage(report: IntegratedReport): string {
+  const periodoFmt = periodoMsgFmt(report.periodo);
   const lines = [
-    `*Check-in de performance — ${report.cliente}*`,
-    `Período: ${report.periodo}`,
-    "",
-    `💰 *Investimento total: ${moneyBR(report.totais.investimento_total)}*`,
+    `📊 *Relatório de Tráfego — ${report.cliente} — ${periodoFmt}*`,
+    ``,
+    ``,
+    `📅 Período: ${periodoFmt}`,
+    `💰 Investimento total: ${moneyBR(report.totais.investimento_total)}`,
   ];
 
   const meta = report.canais.meta_ads;
@@ -870,24 +850,38 @@ function buildIntegratedMessage(report: IntegratedReport): string {
     const totalCliques = meta.campanhas.reduce((s, c) => s + (c.cliques ?? 0), 0);
     const totalImpressoes = meta.campanhas.reduce((s, c) => s + (c.impressoes ?? 0), 0);
     const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
+    const avgCPC = totalCliques > 0 ? report.totais.investimento_meta / totalCliques : 0;
     const leadsForm = meta.totais.por_categoria["lead_form"] ?? 0;
     const conversas = meta.totais.por_categoria["messages"] ?? 0;
     const gastoLeads = meta.campanhas.filter(c => c.categoria === "lead_form").reduce((s, c) => s + c.gasto, 0);
     const gastoConv = meta.campanhas.filter(c => c.categoria === "messages").reduce((s, c) => s + c.gasto, 0);
-    lines.push("", `📱 *Meta Ads — ${moneyBR(report.totais.investimento_meta)}*`);
-    if (leadsForm > 0) lines.push(`- Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(gastoLeads / leadsForm)}`);
-    if (conversas > 0) lines.push(`- Conversas: ${intBR(conversas)} · Custo/conversa: ${moneyBR(gastoConv / conversas)}`);
-    lines.push(`- Impressões: ${intBR(totalImpressoes)} · CTR: ${pctBR(avgCTR)}`);
+    lines.push(``, ``, `📱 *Meta Ads — ${moneyBR(report.totais.investimento_meta)}*`);
+    if (leadsForm > 0) lines.push(`🎯 Leads: ${intBR(leadsForm)} · CPL médio: ${moneyBR(gastoLeads / leadsForm)}`);
+    if (conversas > 0) lines.push(`💬 Conversas: ${intBR(conversas)} · Custo/conversa: ${moneyBR(gastoConv / conversas)}`);
+    lines.push(
+      `🖱️ Cliques: ${intBR(totalCliques)}`,
+      `📈 CTR: ${pctBR(avgCTR)}`,
+      `💵 CPC médio: ${moneyBR(avgCPC)}`,
+      `👀 Impressões: ${intBR(totalImpressoes)}`,
+    );
   }
 
   const google = report.canais.google_ads;
   if (google && report.totais.investimento_google > 0) {
-    lines.push("", `🔍 *Google Ads — ${moneyBR(report.totais.investimento_google)}*`);
-    if (google.resumo.conversoes > 0) {
-      lines.push(`- Conversões: ${intBR(google.resumo.conversoes)} · CPA: ${moneyBR(google.resumo.custo_por_conversao)}`);
+    const gr = google.resumo;
+    lines.push(``, ``, `🔍 *Google Ads — ${moneyBR(report.totais.investimento_google)}*`);
+    if (gr.conversoes > 0) {
+      lines.push(`🎯 Conversões: ${intBR(gr.conversoes)} · CPA: ${moneyBR(gr.custo_por_conversao)}`);
     }
-    lines.push(`- Cliques: ${intBR(google.resumo.cliques)} · CTR: ${pctBR(google.resumo.ctr)} · CPC: ${moneyBR(google.resumo.cpc_medio)}`);
+    lines.push(
+      `🖱️ Cliques: ${intBR(gr.cliques)}`,
+      `📈 CTR: ${pctBR(gr.ctr)}`,
+      `💵 CPC médio: ${moneyBR(gr.cpc_medio)}`,
+      `👀 Impressões: ${intBR(gr.impressoes)}`,
+    );
   }
+
+  lines.push(``, ``, `✅ Resumo:`, `[IA]`);
 
   return lines.join("\n");
 }

@@ -34,3 +34,11 @@ export function sortKeyFromBR(label: string): string {
   const m = label.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   return m ? `${m[3]}${m[2]}${m[1]}` : label;
 }
+
+/** Converte `YYYY-MM-DD a YYYY-MM-DD` em `DD/MM a DD/MM/YYYY` para mensagens WhatsApp. */
+export function periodoMsgFmt(label: string): string {
+  const m = label.match(/(\d{4})-(\d{2})-(\d{2})\s+a\s+(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return label;
+  const [, , sm, sd, ey, em, ed] = m;
+  return `${sd}/${sm} a ${ed}/${em}/${ey}`;
+}

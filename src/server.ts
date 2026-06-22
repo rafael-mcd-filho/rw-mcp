@@ -962,8 +962,8 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         level: "campaign", since, until, datePreset, accountId,
       });
       const periodoLabel =
-        since && until ? `${since} → ${until}` : datePreset ?? "últimos 30 dias";
-      const report = buildAccountReport(rows, periodoLabel);
+        since && until ? `${since} a ${until}` : datePreset ?? "últimos 30 dias";
+      const report = buildAccountReport(rows, periodoLabel, clientNameFrom(args) || undefined);
 
       const wantsDaily =
         args.incluir_diario ?? args.daily ?? args.diario ??
@@ -1016,7 +1016,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       }
 
       const periodo = `${periodSince} a ${periodUntil}`;
-      const accountReport = buildAccountReport(accountRows, periodo);
+      const accountReport = buildAccountReport(accountRows, periodo, cliente);
       const adsets = processMetaAdsets(adsetRows);
       const ads = processMetaAds(adRows);
       const demographics = processMetaDemographics(demoRows);
