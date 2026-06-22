@@ -1172,6 +1172,45 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
     }
   );
 
+  server.tool(
+    "send_whatsapp_document",
+    "Envia um arquivo PDF (ou outro documento) via WhatsApp usando a Evolution API. Passe a URL pública do arquivo e o nome que o destinatário verá. Use APENAS após aprovação do usuário.",
+    {
+      phone: z.string().describe("Número do destinatário com DDI+DDD, só dígitos (ex: 5583999999999)."),
+      document_url: z.string().describe("URL pública do arquivo a enviar (ex: link do Vercel Blob)."),
+      filename: z.string().describe("Nome do arquivo que aparecerá no WhatsApp (ex: relatorio-cao-sabido.pdf)."),
+      caption: z.string().optional().describe("Legenda/texto que acompanha o arquivo (opcional)."),
+    },
+    async (args) => {
+      const baseUrl = (process.env.EVOLUTION_URL ?? "https://evolution.rwsolucoesdigitais.com").replace(/\/$/, "");
+      const instance = process.env.EVOLUTION_INSTANCE ?? "RWSL";
+      const apiKey = process.env.EVOLUTION_API_KEY;
+      if (!apiKey) return toolError("EVOLUTION_API_KEY não configurada no servidor.");
+
+      const res = await fetch(`${baseUrl}/message/sendMedia/${instance}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: apiKey },
+        body: JSON.stringify({
+          number: args.phone,
+          mediatype: "document",
+          media: args.document_url,
+          fileName: args.filename,
+          caption: args.caption ?? "",
+        }),
+      });
+
+      if (!res.ok) {
+        const body = await res.text().catch(() => res.statusText);
+        return toolError(`Evolution API retornou ${res.status}: ${body}`);
+      }
+
+      const data = await res.json() as Record<string, unknown>;
+      const key = data.key as Record<string, unknown> | undefined;
+      const msgId = key?.id ?? data.id ?? "ok";
+      return json({ enviado: true, messageId: msgId, destinatario: args.phone, arquivo: args.filename });
+    }
+  );
+
   // ─── Base de clientes (webhook n8n) ─────────────────────────────────────────
 
   const CLIENT_NAME_LOOKUP_SCHEMA = {
