@@ -699,4 +699,505 @@ export class MetaAdsClient {
       issues,
     };
   }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // ESCRITA — create / update / delete / duplicate
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /** POST/DELETE com retry/backoff (mesma política de erros do fetchJson). */
+  private async sendWrite<T>(
+    endpoint: string,
+    body: Record<string, unknown>,
+    method: "POST" | "DELETE" = "POST"
+  ): Promise<T> {
+    const url = `${META_API_BASE}/${endpoint}`;
+    const payload: Record<string, unknown> = { ...body, access_token: this.accessToken };
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e));
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
+
+      const data = (await response.json()) as {
+        error?: { message: string; code: number; error_user_msg?: string };
+      } & T;
+      const err = (data as {
+        error?: { message: string; code: number; error_user_msg?: string };
+      }).error;
+
+      if (response.ok && !err) return data;
+
+      const code = err?.code ?? 0;
+      const retryable =
+        response.status === 429 ||
+        response.status >= 500 ||
+        RETRYABLE_META_CODES.has(code);
+
+      lastError = new Error(err?.error_user_msg ?? err?.message ?? `HTTP ${response.status}`);
+      if (!retryable || attempt === MAX_RETRIES) throw lastError;
+
+      await sleep(500 * 2 ** attempt);
+    }
+
+    throw lastError ?? new Error("Falha desconhecida na requisição de escrita");
+  }
+
+  /** Corrige pegadinhas conhecidas no targeting antes de enviar. */
+  private normalizeTargeting(t: Record<string, unknown>): Record<string, unknown> {
+    const targeting = { ...t };
+    const ig = targeting["instagram_positions"];
+    // explore_home exige que 'explore' também esteja na lista (erro 2490392).
+    if (Array.isArray(ig) && ig.includes("explore_home") && !ig.includes("explore")) {
+      targeting["instagram_positions"] = [...ig, "explore"];
+    }
+    return targeting;
+  }
+
+  /**
+   * Descobre páginas e contas de Instagram vinculadas à conta de anúncio.
+   * Tenta os edges oficiais (promote_pages / instagram_accounts); se vierem
+   * vazios (token sem pages_show_list), deriva page_id/instagram_user_id dos
+   * criativos existentes — fonte confiável para reusar nos novos criativos.
+   */
+  async getAccountAssets(accountId?: string): Promise<{
+    account_id: string;
+    pages: unknown[];
+    instagram_accounts: unknown[];
+    derived_from_creatives?: { page_ids: string[]; instagram_user_ids: string[] };
+  }> {
+    const acct = this.resolveAccount(accountId);
+    let pages: unknown[] = [];
+    let instagram: unknown[] = [];
+    try {
+      pages = await this.requestPaged(`${acct}/promote_pages`, { fields: "id,name", limit: "100" });
+    } catch {
+      /* sem permissão de páginas */
+    }
+    try {
+      instagram = await this.requestPaged(`${acct}/instagram_accounts`, {
+        fields: "id,username",
+        limit: "100",
+      });
+    } catch {
+      /* sem permissão de Instagram */
+    }
+
+    if (pages.length && instagram.length) {
+      return { account_id: acct, pages, instagram_accounts: instagram };
+    }
+
+    // Fallback: varre criativos recentes e coleta page_id / instagram_user_id distintos.
+    const pageIds = new Set<string>();
+    const igIds = new Set<string>();
+    try {
+      const creatives = await this.requestPaged<{
+        instagram_user_id?: string;
+        object_story_spec?: { page_id?: string };
+      }>(`${acct}/adcreatives`, {
+        fields: "instagram_user_id,object_story_spec{page_id}",
+        limit: "100",
+      });
+      for (const c of creatives) {
+        if (c.instagram_user_id) igIds.add(c.instagram_user_id);
+        const pid = c.object_story_spec?.page_id;
+        if (pid) pageIds.add(pid);
+      }
+    } catch {
+      /* sem criativos acessíveis */
+    }
+
+    return {
+      account_id: acct,
+      pages,
+      instagram_accounts: instagram,
+      derived_from_creatives: {
+        page_ids: [...pageIds],
+        instagram_user_ids: [...igIds],
+      },
+    };
+  }
+
+  async createCampaign(p: {
+    name: string;
+    objective: string;
+    accountId?: string;
+    status?: string;
+    specialAdCategories?: string[];
+    buyingType?: string;
+    dailyBudget?: number;
+    lifetimeBudget?: number;
+    bidStrategy?: string;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = {
+      name: p.name,
+      objective: p.objective,
+      status: p.status ?? "PAUSED",
+      special_ad_categories: p.specialAdCategories ?? [],
+    };
+    if (p.buyingType) body["buying_type"] = p.buyingType;
+
+    const hasCbo = p.dailyBudget != null || p.lifetimeBudget != null;
+    if (p.dailyBudget != null) body["daily_budget"] = p.dailyBudget;
+    if (p.lifetimeBudget != null) body["lifetime_budget"] = p.lifetimeBudget;
+    if (hasCbo) body["bid_strategy"] = p.bidStrategy ?? "LOWEST_COST_WITHOUT_CAP";
+
+    // Regra aprendida: OUTCOME_LEADS sem CBO (orçamento por conjunto) exige o flag.
+    if (p.objective === "OUTCOME_LEADS" && !hasCbo) {
+      body["is_adset_budget_sharing_enabled"] = false;
+    }
+
+    return this.sendWrite<{ id: string }>(`${acct}/campaigns`, body);
+  }
+
+  async createAdSet(p: {
+    accountId?: string;
+    name: string;
+    campaignId: string;
+    optimizationGoal: string;
+    billingEvent?: string;
+    bidStrategy?: string;
+    dailyBudget?: number;
+    lifetimeBudget?: number;
+    bidAmount?: number;
+    targeting: Record<string, unknown>;
+    promotedObject?: Record<string, unknown>;
+    destinationType?: string;
+    attributionSpec?: unknown[];
+    budgetSchedules?: unknown[];
+    startTime?: string;
+    endTime?: string;
+    status?: string;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = {
+      name: p.name,
+      campaign_id: p.campaignId,
+      optimization_goal: p.optimizationGoal,
+      billing_event: p.billingEvent ?? "IMPRESSIONS",
+      // Regra aprendida: bid_strategy deve ser explícito (erro 2490487).
+      bid_strategy: p.bidStrategy ?? "LOWEST_COST_WITHOUT_CAP",
+      targeting: this.normalizeTargeting(p.targeting),
+      status: p.status ?? "PAUSED",
+    };
+    if (p.dailyBudget != null) body["daily_budget"] = p.dailyBudget;
+    if (p.lifetimeBudget != null) body["lifetime_budget"] = p.lifetimeBudget;
+    if (p.bidAmount != null) body["bid_amount"] = p.bidAmount;
+    if (p.promotedObject) body["promoted_object"] = p.promotedObject;
+    if (p.destinationType) body["destination_type"] = p.destinationType;
+    if (p.attributionSpec) body["attribution_spec"] = p.attributionSpec;
+    if (p.budgetSchedules) body["budget_schedules"] = p.budgetSchedules;
+    if (p.startTime) body["start_time"] = p.startTime;
+    if (p.endTime) body["end_time"] = p.endTime;
+
+    return this.sendWrite<{ id: string }>(`${acct}/adsets`, body);
+  }
+
+  async createAdCreative(p: {
+    accountId?: string;
+    name: string;
+    objectStorySpec?: Record<string, unknown>;
+    assetFeedSpec?: Record<string, unknown>;
+    instagramUserId?: string;
+    urlTags?: string;
+    degreesOfFreedomSpec?: Record<string, unknown>;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = { name: p.name };
+    if (p.objectStorySpec) body["object_story_spec"] = p.objectStorySpec;
+    if (p.assetFeedSpec) body["asset_feed_spec"] = p.assetFeedSpec;
+    if (p.instagramUserId) body["instagram_user_id"] = p.instagramUserId;
+    if (p.urlTags) body["url_tags"] = p.urlTags;
+    if (p.degreesOfFreedomSpec) body["degrees_of_freedom_spec"] = p.degreesOfFreedomSpec;
+    return this.sendWrite<{ id: string }>(`${acct}/adcreatives`, body);
+  }
+
+  async createAd(p: {
+    accountId?: string;
+    name: string;
+    adsetId: string;
+    creativeId: string;
+    status?: string;
+    conversionDomain?: string;
+    degreesOfFreedomSpec?: Record<string, unknown>;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = {
+      name: p.name,
+      adset_id: p.adsetId,
+      creative: { creative_id: p.creativeId },
+      status: p.status ?? "PAUSED",
+    };
+    if (p.conversionDomain) body["conversion_domain"] = p.conversionDomain;
+    if (p.degreesOfFreedomSpec) body["degrees_of_freedom_spec"] = p.degreesOfFreedomSpec;
+    return this.sendWrite<{ id: string }>(`${acct}/ads`, body);
+  }
+
+  /** Atualização genérica de campos (campanha, conjunto ou anúncio). */
+  async updateObject(
+    id: string,
+    fields: Record<string, unknown>
+  ): Promise<{ success?: boolean; id?: string }> {
+    const body = { ...fields };
+    if (body["targeting"] && typeof body["targeting"] === "object") {
+      body["targeting"] = this.normalizeTargeting(
+        body["targeting"] as Record<string, unknown>
+      );
+    }
+    return this.sendWrite<{ success?: boolean; id?: string }>(id, body);
+  }
+
+  async deleteObject(id: string): Promise<{ success?: boolean }> {
+    return this.sendWrite<{ success?: boolean }>(id, {}, "DELETE");
+  }
+
+  /** Duplica campanha/conjunto/anúncio via endpoint /copies. */
+  async duplicateObject(
+    id: string,
+    kind: "campaign" | "adset" | "ad",
+    opts?: { deepCopy?: boolean; statusOption?: string }
+  ): Promise<unknown> {
+    const body: Record<string, unknown> = {
+      status_option: opts?.statusOption ?? "PAUSED",
+    };
+    if (kind === "campaign") body["deep_copy"] = opts?.deepCopy ?? false;
+    return this.sendWrite<unknown>(`${id}/copies`, body);
+  }
+
+  /**
+   * Troca os url_tags de um anúncio recriando o criativo (criativos são imutáveis).
+   * Reusa object_story_id quando o criativo vem de post orgânico, senão object_story_spec.
+   */
+  async swapUrlTags(
+    adId: string,
+    urlTags: string,
+    accountId?: string
+  ): Promise<{ old_creative?: string; new_creative: string; ad_id: string }> {
+    const acct = this.resolveAccount(accountId);
+    const ad = await this.request<{ creative?: { id: string } }>(adId, {
+      fields: "creative{id}",
+    });
+    const oldId = ad.creative?.id;
+    if (!oldId) throw new Error("Anúncio sem criativo para copiar.");
+
+    const creative = await this.request<{
+      name?: string;
+      object_story_id?: string;
+      object_story_spec?: Record<string, unknown>;
+      instagram_user_id?: string;
+    }>(oldId, {
+      fields: "name,object_story_id,object_story_spec,instagram_user_id",
+    });
+
+    const body: Record<string, unknown> = {
+      name: `${creative.name ?? "creative"} [utm]`,
+      url_tags: urlTags,
+    };
+    if (creative.object_story_id) body["object_story_id"] = creative.object_story_id;
+    else if (creative.object_story_spec) body["object_story_spec"] = creative.object_story_spec;
+    else throw new Error("Criativo sem object_story_id nem object_story_spec — não dá para recriar.");
+    if (creative.instagram_user_id) body["instagram_user_id"] = creative.instagram_user_id;
+
+    const created = await this.sendWrite<{ id: string }>(`${acct}/adcreatives`, body);
+    await this.sendWrite(adId, { creative: { creative_id: created.id } });
+    return { old_creative: oldId, new_creative: created.id, ad_id: adId };
+  }
+
+  /** Cria um período de aumento de orçamento (high demand period) num conjunto. */
+  async createBudgetSchedule(
+    adsetId: string,
+    p: {
+      timeStart: number;
+      timeEnd: number;
+      budgetValue: number;
+      budgetValueType?: string;
+      recurrenceType?: string;
+    }
+  ): Promise<unknown> {
+    const body: Record<string, unknown> = {
+      time_start: p.timeStart,
+      time_end: p.timeEnd,
+      budget_value: p.budgetValue,
+      budget_value_type: p.budgetValueType ?? "ABSOLUTE",
+    };
+    if (p.recurrenceType) body["recurrence_type"] = p.recurrenceType;
+    return this.sendWrite<unknown>(`${adsetId}/budget_schedules`, body);
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // TARGETING — busca e estimativa (GET)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  async searchInterests(q: string, limit = 25): Promise<unknown[]> {
+    return this.requestPaged<unknown>("search", {
+      type: "adinterest",
+      q,
+      limit: String(limit),
+    });
+  }
+
+  async searchGeolocations(
+    q: string,
+    types?: string[],
+    limit = 25
+  ): Promise<unknown[]> {
+    const params: Record<string, string> = {
+      type: "adgeolocation",
+      q,
+      limit: String(limit),
+    };
+    if (types?.length) params["location_types"] = JSON.stringify(types);
+    return this.requestPaged<unknown>("search", params);
+  }
+
+  async searchBehaviors(limit = 100): Promise<unknown[]> {
+    return this.requestPaged<unknown>("search", {
+      type: "adTargetingCategory",
+      class: "behaviors",
+      limit: String(limit),
+    });
+  }
+
+  async getDeliveryEstimate(p: {
+    accountId?: string;
+    targeting: Record<string, unknown>;
+    optimizationGoal: string;
+  }): Promise<unknown> {
+    const acct = this.resolveAccount(p.accountId);
+    return this.request<unknown>(`${acct}/delivery_estimate`, {
+      optimization_goal: p.optimizationGoal,
+      targeting_spec: JSON.stringify(this.normalizeTargeting(p.targeting)),
+    });
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // MÍDIA — listar e enviar vídeos/imagens
+  // ───────────────────────────────────────────────────────────────────────────
+
+  async listVideos(accountId?: string, limit = 50): Promise<unknown[]> {
+    return this.requestPaged<unknown>(`${this.resolveAccount(accountId)}/advideos`, {
+      fields: "id,title,created_time,length",
+      limit: String(limit),
+    });
+  }
+
+  async listImages(accountId?: string, limit = 50): Promise<unknown[]> {
+    return this.requestPaged<unknown>(`${this.resolveAccount(accountId)}/adimages`, {
+      fields: "hash,name,url,width,height,created_time",
+      limit: String(limit),
+    });
+  }
+
+  /** Envia um vídeo a partir de uma URL (a Meta baixa o arquivo server-side). */
+  async createVideo(p: {
+    accountId?: string;
+    fileUrl: string;
+    name?: string;
+    title?: string;
+    description?: string;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = { file_url: p.fileUrl };
+    if (p.name) body["name"] = p.name;
+    if (p.title) body["title"] = p.title;
+    if (p.description) body["description"] = p.description;
+    return this.sendWrite<{ id: string }>(`${acct}/advideos`, body);
+  }
+
+  /** Envia uma imagem a partir de uma URL (baixa os bytes e faz multipart). */
+  async createImage(p: {
+    accountId?: string;
+    url: string;
+    name?: string;
+  }): Promise<unknown> {
+    const acct = this.resolveAccount(p.accountId);
+    const res = await fetch(p.url);
+    if (!res.ok) throw new Error(`Falha ao baixar imagem: HTTP ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const ct = res.headers.get("content-type") ?? "image/jpeg";
+    const ext = ct.includes("png") ? "png" : ct.includes("webp") ? "webp" : "jpg";
+
+    const form = new FormData();
+    form.append("access_token", this.accessToken);
+    if (p.name) form.append("name", p.name);
+    form.append("filename", new Blob([buf], { type: ct }), `upload.${ext}`);
+
+    const up = await fetch(`${META_API_BASE}/${acct}/adimages`, {
+      method: "POST",
+      body: form,
+    });
+    const data = (await up.json()) as {
+      error?: { message: string; error_user_msg?: string };
+    };
+    if (data.error) {
+      throw new Error(data.error.error_user_msg ?? data.error.message);
+    }
+    return data;
+  }
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // PÚBLICOS — listar e criar (custom + lookalike)
+  // ───────────────────────────────────────────────────────────────────────────
+
+  async listCustomAudiences(accountId?: string, limit = 100): Promise<unknown[]> {
+    return this.requestPaged<unknown>(
+      `${this.resolveAccount(accountId)}/customaudiences`,
+      {
+        fields:
+          "id,name,subtype,description,approximate_count_lower_bound,approximate_count_upper_bound,operation_status",
+        limit: String(limit),
+      }
+    );
+  }
+
+  async createCustomAudience(p: {
+    accountId?: string;
+    name: string;
+    subtype?: string;
+    description?: string;
+    customerFileSource?: string;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = {
+      name: p.name,
+      subtype: p.subtype ?? "CUSTOM",
+    };
+    if (p.description) body["description"] = p.description;
+    if (p.customerFileSource) body["customer_file_source"] = p.customerFileSource;
+    return this.sendWrite<{ id: string }>(`${acct}/customaudiences`, body);
+  }
+
+  async createLookalike(p: {
+    accountId?: string;
+    name: string;
+    sourceAudienceId: string;
+    spec: Record<string, unknown>;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    return this.sendWrite<{ id: string }>(`${acct}/customaudiences`, {
+      name: p.name,
+      subtype: "LOOKALIKE",
+      origin_audience_id: p.sourceAudienceId,
+      lookalike_spec: p.spec,
+    });
+  }
+
+  /** Detalhes de um criativo (útil para inspecionar/reusar configurações). */
+  async getCreative(id: string, fields?: string): Promise<unknown> {
+    return this.request<unknown>(id, {
+      fields:
+        fields ??
+        "id,name,object_story_spec,asset_feed_spec,call_to_action_type,url_tags,instagram_user_id,thumbnail_url,image_hash,effective_object_story_id",
+    });
+  }
 }

@@ -48,6 +48,7 @@ import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
+import { registerWriteTools } from "./server-tools/write-tools.js";
 import { resolveNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
@@ -750,6 +751,40 @@ export function createMcpServer(
     },
     async (args) =>
       json(await client.getAds(args.adset_id ?? args.adsetId, campaignIdFrom(args), statusFrom(args), accountIdFrom(args)))
+  );
+
+  // ─── Mídia e públicos (leitura) ───────────────────────────────────────────────
+
+  server.tool(
+    "list_videos",
+    "Lista os vídeos da conta (id, título, data, duração em segundos). Use para o usuário escolher qual vídeo usar num criativo.",
+    { ...ACCOUNT_ID_SCHEMA },
+    async (args) => json(await client.listVideos(accountIdFrom(args)))
+  );
+
+  server.tool(
+    "list_images",
+    "Lista as imagens da conta (hash, nome, url, dimensões). O hash é o que se usa em image_hash nos criativos.",
+    { ...ACCOUNT_ID_SCHEMA },
+    async (args) => json(await client.listImages(accountIdFrom(args)))
+  );
+
+  server.tool(
+    "list_custom_audiences",
+    "Lista os públicos personalizados da conta (id, nome, subtype, tamanho aproximado). Use para escolher públicos a incluir ou excluir no targeting.",
+    { ...ACCOUNT_ID_SCHEMA },
+    async (args) => json(await client.listCustomAudiences(accountIdFrom(args)))
+  );
+
+  server.tool(
+    "get_creative",
+    "Detalhes de um criativo pelo ID (object_story_spec, asset_feed_spec, url_tags, instagram_user_id, etc). Útil para inspecionar ou reusar a configuração de um criativo existente.",
+    {
+      creative_id: z.string().describe("ID do criativo."),
+      fields: z.string().optional().describe("Campos específicos (opcional)."),
+    },
+    async (args) =>
+      json(await client.getCreative(args.creative_id as string, args.fields as string | undefined))
   );
 
   // ─── Insights brutos ──────────────────────────────────────────────────────────
@@ -2148,6 +2183,9 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
 
   // Camada de inteligência (diagnóstico + auditoria) — registrada à parte.
   registerIntelligenceTools(server, client);
+
+  // Camada de escrita (criação/edição/duplicação) + targeting — com trava de confirmação.
+  registerWriteTools(server, client);
 
   return server;
 }
