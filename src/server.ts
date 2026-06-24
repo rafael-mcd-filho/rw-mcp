@@ -787,6 +787,41 @@ export function createMcpServer(
       json(await client.getCreative(args.creative_id as string, args.fields as string | undefined))
   );
 
+  server.tool(
+    "get_preview",
+    "Gera o preview (HTML em iframe) de um criativo num posicionamento, para validar como o anúncio aparece ANTES de ativar. ad_format='all' retorna os principais formatos do Instagram.",
+    {
+      creative_id: z.string().describe("ID do criativo."),
+      ad_format: z
+        .string()
+        .optional()
+        .describe(
+          "Formato (ex: INSTAGRAM_STORY, INSTAGRAM_STANDARD, INSTAGRAM_REELS, MOBILE_FEED_STANDARD). 'all' = principais do Instagram. Padrão INSTAGRAM_STORY."
+        ),
+    },
+    async (args) => {
+      const fmt = (args.ad_format as string | undefined) ?? "INSTAGRAM_STORY";
+      const creativeId = args.creative_id as string;
+      if (fmt.toLowerCase() === "all") {
+        const formats = [
+          "INSTAGRAM_STANDARD",
+          "INSTAGRAM_STORY",
+          "INSTAGRAM_REELS",
+        ];
+        const out: Record<string, unknown> = {};
+        for (const f of formats) {
+          try {
+            out[f] = await client.getCreativePreview(creativeId, f);
+          } catch (e) {
+            out[f] = { error: (e as Error).message };
+          }
+        }
+        return json(out);
+      }
+      return json(await client.getCreativePreview(creativeId, fmt));
+    }
+  );
+
   // ─── Insights brutos ──────────────────────────────────────────────────────────
 
   server.tool(

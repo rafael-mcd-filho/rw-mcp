@@ -1,8 +1,14 @@
-// Registro das tools de ESCRITA (criação, edição, exclusão, duplicação) e de
-// TARGETING (busca de geo/interesses/comportamentos + estimativa de alcance).
-// Mantido fora do server.ts para não inchá-lo. Toda ação que modifica a conta
-// passa por uma TRAVA DE CONFIRMAÇÃO: sem confirm=true, o tool apenas devolve um
-// preview do que seria feito, sem alterar nada.
+// Registro das tools de ESCRITA (criação, edição, exclusão, duplicação),
+// MÍDIA, PÚBLICOS e TARGETING. Mantido fora do server.ts para não inchá-lo.
+//
+// POLÍTICA DE CONFIRMAÇÃO (trava):
+//   - Criar objetos PAUSED/inertes (campanha, conjunto, criativo, anúncio,
+//     vídeo, imagem, público, duplicação) NÃO pede confirmação — não gasta nada
+//     e é reversível. A segurança fica na ATIVAÇÃO.
+//   - Ações que gastam ou destroem (set_status ACTIVE, schedule_budget_increase,
+//     update_object, delete_object, swap_url_tags) exigem confirm=true; sem ele,
+//     o tool só devolve um preview e não altera nada.
+//   - Criação em lote oferece dry_run=true para revisar o plano antes.
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
@@ -31,8 +37,8 @@ const isConfirmed = (a: Record<string, unknown>): boolean =>
   a["confirmar"] === "true";
 
 /**
- * Trava de confirmação. Quando confirm != true, devolve o preview da ação e
- * sinaliza para o handler interromper (nada é alterado na conta).
+ * Trava de confirmação para ações de risco. Quando confirm != true, devolve o
+ * preview da ação e sinaliza para o handler interromper (nada é alterado).
  */
 function previewGuard(a: Record<string, unknown>, acao: string, detalhe: unknown) {
   if (isConfirmed(a)) return null;
@@ -87,7 +93,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Targeting: busca ─────────────────────────────────────────────────────────
+  // ─── Targeting: busca (read-only) ─────────────────────────────────────────────
   server.tool(
     "search_geolocations",
     "Busca localizações (cidade, região, país, CEP) e retorna a 'key' que o targeting usa. Ex: buscar 'Recife' devolve a key da cidade para usar em geo_locations.cities.",
@@ -162,18 +168,17 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Criação: campanha ────────────────────────────────────────────────────────
+  // ─── Criação (PAUSED/inerte — sem trava) ──────────────────────────────────────
   server.tool(
     "create_campaign",
-    "Cria uma campanha (sempre PAUSED). Para OUTCOME_LEADS sem orçamento de campanha (ABO), o flag is_adset_budget_sharing_enabled=false é aplicado automaticamente. Definir daily_budget/lifetime_budget aqui = CBO (orçamento na campanha).",
+    "Cria uma campanha (sempre PAUSED — sem custo até ativar). Para OUTCOME_LEADS sem orçamento de campanha (ABO), o flag is_adset_budget_sharing_enabled=false é aplicado automaticamente. Definir daily_budget/lifetime_budget aqui = CBO.",
     {
       ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
       name: z.string().describe("Nome da campanha."),
       objective: z
         .string()
         .describe("Objetivo (ex: OUTCOME_LEADS, OUTCOME_TRAFFIC, OUTCOME_SALES, OUTCOME_ENGAGEMENT, OUTCOME_AWARENESS)."),
-      status: STATUS_ENUM.optional().describe("Padrão PAUSED. Use create + confirm; ative depois."),
+      status: STATUS_ENUM.optional().describe("Padrão PAUSED. Ative depois com set_status."),
       special_ad_categories: z
         .array(z.string())
         .optional()
@@ -181,40 +186,34 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       buying_type: z.string().optional().describe("AUCTION (padrão) ou RESERVED."),
       daily_budget: z.number().optional().describe("Orçamento diário em CENTAVOS (2000 = R$20). Define CBO."),
       lifetime_budget: z.number().optional().describe("Orçamento total em CENTAVOS. Define CBO."),
-      bid_strategy: z
-        .string()
-        .optional()
-        .describe("Só com CBO. Padrão LOWEST_COST_WITHOUT_CAP."),
+      bid_strategy: z.string().optional().describe("Só com CBO. Padrão LOWEST_COST_WITHOUT_CAP."),
     },
     async (args) => {
       try {
-        const p = {
-          name: args.name as string,
-          objective: args.objective as string,
-          accountId: accountIdFrom(args),
-          status: args.status as string | undefined,
-          specialAdCategories: args.special_ad_categories as string[] | undefined,
-          buyingType: args.buying_type as string | undefined,
-          dailyBudget: args.daily_budget as number | undefined,
-          lifetimeBudget: args.lifetime_budget as number | undefined,
-          bidStrategy: args.bid_strategy as string | undefined,
-        };
-        const guard = previewGuard(args, "create_campaign", p);
-        if (guard) return guard;
-        return json(await client.createCampaign(p));
+        return json(
+          await client.createCampaign({
+            name: args.name as string,
+            objective: args.objective as string,
+            accountId: accountIdFrom(args),
+            status: args.status as string | undefined,
+            specialAdCategories: args.special_ad_categories as string[] | undefined,
+            buyingType: args.buying_type as string | undefined,
+            dailyBudget: args.daily_budget as number | undefined,
+            lifetimeBudget: args.lifetime_budget as number | undefined,
+            bidStrategy: args.bid_strategy as string | undefined,
+          })
+        );
       } catch (e) {
         return toolError((e as Error).message);
       }
     }
   );
 
-  // ─── Criação: conjunto ────────────────────────────────────────────────────────
   server.tool(
     "create_adset",
-    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE.",
+    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE. Para vários conjuntos parecidos, prefira create_adsets_batch.",
     {
       ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
       name: z.string().describe("Nome do conjunto."),
       campaign_id: z.string().describe("ID da campanha mãe."),
       optimization_goal: z
@@ -241,40 +240,18 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     },
     async (args) => {
       try {
-        const p = {
-          accountId: accountIdFrom(args),
-          name: args.name as string,
-          campaignId: args.campaign_id as string,
-          optimizationGoal: args.optimization_goal as string,
-          billingEvent: args.billing_event as string | undefined,
-          bidStrategy: args.bid_strategy as string | undefined,
-          dailyBudget: args.daily_budget as number | undefined,
-          lifetimeBudget: args.lifetime_budget as number | undefined,
-          bidAmount: args.bid_amount as number | undefined,
-          targeting: args.targeting as Record<string, unknown>,
-          promotedObject: args.promoted_object as Record<string, unknown> | undefined,
-          destinationType: args.destination_type as string | undefined,
-          attributionSpec: args.attribution_spec as unknown[] | undefined,
-          startTime: args.start_time as string | undefined,
-          endTime: args.end_time as string | undefined,
-          status: args.status as string | undefined,
-        };
-        const guard = previewGuard(args, "create_adset", p);
-        if (guard) return guard;
-        return json(await client.createAdSet(p));
+        return json(await client.createAdSet(adsetParamsFrom(args, accountIdFrom(args))));
       } catch (e) {
         return toolError((e as Error).message);
       }
     }
   );
 
-  // ─── Criação: criativo ────────────────────────────────────────────────────────
   server.tool(
     "create_creative",
-    "Cria um criativo. Para vídeo, object_story_spec.video_data PRECISA de image_hash ou image_url (thumbnail). O display link fica em call_to_action.value.link_caption. ATENÇÃO: combinar object_story_spec + asset_feed_spec (ex: WhatsApp addon) pode falhar com erro 3 se o app não tiver capability de Marketing Partner.",
+    "Cria um criativo. Para vídeo, se o video_data não tiver image_hash/image_url, o thumbnail é buscado automaticamente do vídeo. O display link fica em call_to_action.value.link_caption. ATENÇÃO: object_story_spec + asset_feed_spec juntos (ex: WhatsApp addon) pode falhar com erro 3 se o app não tiver capability de Marketing Partner.",
     {
       ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
       name: z.string().describe("Nome do criativo."),
       object_story_spec: z
         .record(z.unknown())
@@ -293,31 +270,28 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     },
     async (args) => {
       try {
-        const p = {
-          accountId: accountIdFrom(args),
-          name: args.name as string,
-          objectStorySpec: args.object_story_spec as Record<string, unknown> | undefined,
-          assetFeedSpec: args.asset_feed_spec as Record<string, unknown> | undefined,
-          instagramUserId: args.instagram_user_id as string | undefined,
-          urlTags: args.url_tags as string | undefined,
-          degreesOfFreedomSpec: args.degrees_of_freedom_spec as Record<string, unknown> | undefined,
-        };
-        const guard = previewGuard(args, "create_creative", p);
-        if (guard) return guard;
-        return json(await client.createAdCreative(p));
+        return json(
+          await client.createAdCreative({
+            accountId: accountIdFrom(args),
+            name: args.name as string,
+            objectStorySpec: args.object_story_spec as Record<string, unknown> | undefined,
+            assetFeedSpec: args.asset_feed_spec as Record<string, unknown> | undefined,
+            instagramUserId: args.instagram_user_id as string | undefined,
+            urlTags: args.url_tags as string | undefined,
+            degreesOfFreedomSpec: args.degrees_of_freedom_spec as Record<string, unknown> | undefined,
+          })
+        );
       } catch (e) {
         return toolError((e as Error).message);
       }
     }
   );
 
-  // ─── Criação: anúncio ─────────────────────────────────────────────────────────
   server.tool(
     "create_ad",
     "Cria um anúncio (sempre PAUSED) ligando um conjunto a um criativo existente.",
     {
       ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
       name: z.string().describe("Nome do anúncio."),
       adset_id: z.string().describe("ID do conjunto."),
       creative_id: z.string().describe("ID do criativo (de create_creative)."),
@@ -327,28 +301,253 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     },
     async (args) => {
       try {
-        const p = {
-          accountId: accountIdFrom(args),
-          name: args.name as string,
-          adsetId: args.adset_id as string,
-          creativeId: args.creative_id as string,
-          conversionDomain: args.conversion_domain as string | undefined,
-          degreesOfFreedomSpec: args.degrees_of_freedom_spec as Record<string, unknown> | undefined,
-          status: args.status as string | undefined,
-        };
-        const guard = previewGuard(args, "create_ad", p);
-        if (guard) return guard;
-        return json(await client.createAd(p));
+        return json(
+          await client.createAd({
+            accountId: accountIdFrom(args),
+            name: args.name as string,
+            adsetId: args.adset_id as string,
+            creativeId: args.creative_id as string,
+            conversionDomain: args.conversion_domain as string | undefined,
+            degreesOfFreedomSpec: args.degrees_of_freedom_spec as Record<string, unknown> | undefined,
+            status: args.status as string | undefined,
+          })
+        );
       } catch (e) {
         return toolError((e as Error).message);
       }
     }
   );
 
-  // ─── Edição genérica ──────────────────────────────────────────────────────────
+  // ─── Criação em lote (#1) ─────────────────────────────────────────────────────
+  server.tool(
+    "create_adsets_batch",
+    "Cria VÁRIOS conjuntos de uma vez a partir de um template (base) + lista de variações — ideal para dividir por idade, geo, público, etc. Se creative_id for passado, cria também um anúncio por conjunto. Use dry_run=true para revisar o plano antes de criar. Não interrompe no erro: reporta sucesso/falha por item. Tudo PAUSED.",
+    {
+      ...ACCOUNT_SCHEMA,
+      campaign_id: z.string().describe("ID da campanha mãe."),
+      base: z
+        .record(z.unknown())
+        .describe(
+          "Campos compartilhados por todos os conjuntos: optimization_goal, billing_event, bid_strategy, daily_budget (centavos), targeting (base), promoted_object, destination_type, attribution_spec, status."
+        ),
+      variations: z
+        .array(z.record(z.unknown()))
+        .describe(
+          "Lista de variações. Cada item precisa de 'name' e pode sobrescrever qualquer campo do base. Para mudar idade: {name:'18-24', targeting:{age_min:18,age_max:24}} (o targeting é mesclado com o do base)."
+        ),
+      creative_id: z
+        .string()
+        .optional()
+        .describe("Se passado, cria um anúncio por conjunto usando este criativo."),
+      ad_name_prefix: z.string().optional().describe("Prefixo do nome dos anúncios (padrão usa o nome do conjunto)."),
+      dry_run: z.boolean().optional().describe("true = só devolve o plano resolvido, sem criar nada."),
+    },
+    async (args) => {
+      try {
+        const accountId = accountIdFrom(args);
+        const campaignId = args.campaign_id as string;
+        const base = (args.base ?? {}) as Record<string, unknown>;
+        const variations = (args.variations ?? []) as Array<Record<string, unknown>>;
+        const creativeId = args.creative_id as string | undefined;
+        const adPrefix = args.ad_name_prefix as string | undefined;
+
+        if (!variations.length) return toolError("variations vazio: passe ao menos um conjunto.");
+
+        // Resolve cada conjunto: base + variação (targeting é mesclado).
+        const planned = variations.map((v, i) => {
+          if (!v["name"]) throw new Error(`variação ${i + 1} sem 'name'.`);
+          const merged: Record<string, unknown> = { ...base, ...v };
+          merged["targeting"] = {
+            ...((base["targeting"] as Record<string, unknown>) ?? {}),
+            ...((v["targeting"] as Record<string, unknown>) ?? {}),
+          };
+          merged["campaign_id"] = campaignId;
+          return merged;
+        });
+
+        if (args.dry_run === true) {
+          return json({
+            status: "DRY_RUN",
+            campaign_id: campaignId,
+            total_conjuntos: planned.length,
+            cria_anuncios: !!creativeId,
+            plano: planned,
+          });
+        }
+
+        const results: Array<Record<string, unknown>> = [];
+        for (const cfg of planned) {
+          const name = cfg["name"] as string;
+          try {
+            const adset = await client.createAdSet(adsetParamsFrom(cfg, accountId));
+            const item: Record<string, unknown> = { name, adset_id: adset.id };
+            if (creativeId) {
+              const ad = await client.createAd({
+                accountId,
+                name: adPrefix ? `${adPrefix} | ${name}` : name,
+                adsetId: adset.id,
+                creativeId,
+              });
+              item["ad_id"] = ad.id;
+            }
+            results.push(item);
+          } catch (e) {
+            results.push({ name, error: (e as Error).message });
+          }
+        }
+
+        const ok = results.filter((r) => !r["error"]).length;
+        return json({
+          status: "OK",
+          campaign_id: campaignId,
+          criados: ok,
+          falhas: results.length - ok,
+          resultados: results,
+        });
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  // ─── Mídia (upload — inerte, sem trava) ───────────────────────────────────────
+  server.tool(
+    "create_video",
+    "Envia um vídeo para a conta a partir de uma URL (a Meta baixa o arquivo). Retorna o video_id para usar no criativo (o thumbnail é resolvido automaticamente ao criar o criativo).",
+    {
+      ...ACCOUNT_SCHEMA,
+      file_url: z.string().describe("URL pública do arquivo de vídeo (.mp4 etc)."),
+      name: z.string().optional().describe("Nome interno do vídeo."),
+      title: z.string().optional().describe("Título do vídeo."),
+      description: z.string().optional().describe("Descrição do vídeo."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.createVideo({
+            accountId: accountIdFrom(args),
+            fileUrl: args.file_url as string,
+            name: args.name as string | undefined,
+            title: args.title as string | undefined,
+            description: args.description as string | undefined,
+          })
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  server.tool(
+    "create_image",
+    "Envia uma imagem para a conta a partir de uma URL. Retorna o image_hash para usar em criativos (link_data.image_hash ou video_data.image_hash como thumbnail).",
+    {
+      ...ACCOUNT_SCHEMA,
+      url: z.string().describe("URL pública da imagem (.jpg/.png/.webp)."),
+      name: z.string().optional().describe("Nome interno da imagem."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.createImage({
+            accountId: accountIdFrom(args),
+            url: args.url as string,
+            name: args.name as string | undefined,
+          })
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  // ─── Públicos (criação — inerte, sem trava) ───────────────────────────────────
+  server.tool(
+    "create_custom_audience",
+    "Cria um público personalizado (vazio, para preencher depois, ou de regra). subtype padrão CUSTOM. Para website/pixel use subtype WEBSITE com regras à parte.",
+    {
+      ...ACCOUNT_SCHEMA,
+      name: z.string().describe("Nome do público."),
+      subtype: z.string().optional().describe("Padrão CUSTOM. Outros: WEBSITE, ENGAGEMENT, etc."),
+      description: z.string().optional().describe("Descrição."),
+      customer_file_source: z
+        .string()
+        .optional()
+        .describe("Origem dos dados (ex: USER_PROVIDED_ONLY) quando for upload de lista."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.createCustomAudience({
+            accountId: accountIdFrom(args),
+            name: args.name as string,
+            subtype: args.subtype as string | undefined,
+            description: args.description as string | undefined,
+            customerFileSource: args.customer_file_source as string | undefined,
+          })
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  server.tool(
+    "create_lookalike",
+    "Cria um público semelhante (lookalike) a partir de um público de origem. spec ex: {country:'BR', ratio:0.01} (1%).",
+    {
+      ...ACCOUNT_SCHEMA,
+      name: z.string().describe("Nome do lookalike."),
+      source_audience_id: z.string().describe("ID do público de origem."),
+      spec: z.record(z.unknown()).describe("Spec do lookalike (ex: {country:'BR', ratio:0.01})."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.createLookalike({
+            accountId: accountIdFrom(args),
+            name: args.name as string,
+            sourceAudienceId: args.source_audience_id as string,
+            spec: args.spec as Record<string, unknown>,
+          })
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  // ─── Duplicação (cópia PAUSED — sem trava) ────────────────────────────────────
+  server.tool(
+    "duplicate_object",
+    "Duplica uma campanha, conjunto ou anúncio (cópia sempre PAUSED). Para campanha, deep_copy=true copia também conjuntos e anúncios.",
+    {
+      id: z.string().describe("ID do objeto a duplicar."),
+      object_type: z.enum(["campaign", "adset", "ad"]).describe("Tipo do objeto."),
+      deep_copy: z.boolean().optional().describe("Só para campanha: copia conjuntos e anúncios também."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.duplicateObject(
+            args.id as string,
+            args.object_type as "campaign" | "adset" | "ad",
+            { deepCopy: args.deep_copy as boolean | undefined }
+          )
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // AÇÕES DE RISCO (gastam ou destroem) — exigem confirm=true
+  // ═══════════════════════════════════════════════════════════════════════════
+
   server.tool(
     "update_object",
-    "Edita campos de uma campanha, conjunto ou anúncio pelo ID (name, daily_budget em centavos, lifetime_budget, targeting, bid_amount, etc). Para apenas mudar status prefira set_status (cascateia ativação).",
+    "Edita campos de uma campanha, conjunto ou anúncio pelo ID (name, daily_budget em centavos, lifetime_budget, targeting, bid_amount, etc). Para apenas mudar status prefira set_status. Exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
       id: z.string().describe("ID do objeto (campanha, conjunto ou anúncio)."),
@@ -369,10 +568,9 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Mudança de status (com cascata na ativação) ──────────────────────────────
   server.tool(
     "set_status",
-    "Muda o status de uma campanha/conjunto/anúncio (ACTIVE, PAUSED, ARCHIVED). Ao ATIVAR uma campanha, ativa em cascata todos os conjuntos e anúncios dentro dela (regra de segurança). object_type ajuda na cascata.",
+    "Muda o status de uma campanha/conjunto/anúncio (ACTIVE, PAUSED, ARCHIVED). Ao ATIVAR uma campanha, ativa em cascata todos os conjuntos e anúncios dentro dela. Exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
       id: z.string().describe("ID do objeto."),
@@ -415,7 +613,6 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Exclusão ─────────────────────────────────────────────────────────────────
   server.tool(
     "delete_object",
     "Exclui permanentemente uma campanha, conjunto ou anúncio pelo ID. Ação irreversível — exige confirm=true.",
@@ -435,34 +632,9 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Duplicação ───────────────────────────────────────────────────────────────
-  server.tool(
-    "duplicate_object",
-    "Duplica uma campanha, conjunto ou anúncio (cópia sempre PAUSED). Para campanha, deep_copy=true copia também conjuntos e anúncios.",
-    {
-      ...CONFIRM_SCHEMA,
-      id: z.string().describe("ID do objeto a duplicar."),
-      object_type: z.enum(["campaign", "adset", "ad"]).describe("Tipo do objeto."),
-      deep_copy: z.boolean().optional().describe("Só para campanha: copia conjuntos e anúncios também."),
-    },
-    async (args) => {
-      try {
-        const id = args.id as string;
-        const kind = args.object_type as "campaign" | "adset" | "ad";
-        const deepCopy = args.deep_copy as boolean | undefined;
-        const guard = previewGuard(args, "duplicate_object", { id, object_type: kind, deep_copy: deepCopy });
-        if (guard) return guard;
-        return json(await client.duplicateObject(id, kind, { deepCopy }));
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
-  );
-
-  // ─── Swap de UTMs ─────────────────────────────────────────────────────────────
   server.tool(
     "swap_url_tags",
-    "Troca os url_tags (UTMs) de um anúncio. Como criativos são imutáveis, recria o criativo com os UTMs novos (reusando o post original) e aponta o anúncio para ele.",
+    "Troca os url_tags (UTMs) de um anúncio. Como criativos são imutáveis, recria o criativo com os UTMs novos (reusando o post original) e aponta o anúncio para ele. Mexe num anúncio existente — exige confirm=true.",
     {
       ...ACCOUNT_SCHEMA,
       ...CONFIRM_SCHEMA,
@@ -482,10 +654,9 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
-  // ─── Programação de orçamento (high demand period) ────────────────────────────
   server.tool(
     "schedule_budget_increase",
-    "Programa um aumento de orçamento num conjunto durante um período (a 'Programação do orçamento' da interface). Define um valor de orçamento maior entre as datas. budget_value em CENTAVOS. ABSOLUTE = orçamento alvo no período; MULTIPLIER = fator sobre o orçamento base.",
+    "Programa um aumento de orçamento num conjunto durante um período (a 'Programação do orçamento' da interface). budget_value em CENTAVOS. ABSOLUTE = orçamento alvo no período; MULTIPLIER = fator sobre o orçamento base. Afeta gasto — exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
       adset_id: z.string().describe("ID do conjunto."),
@@ -508,11 +679,9 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     async (args) => {
       try {
         const adsetId = args.adset_id as string;
-        const timeStart = toUnix(args.time_start as string | number);
-        const timeEnd = toUnix(args.time_end as string | number);
         const p = {
-          timeStart,
-          timeEnd,
+          timeStart: toUnix(args.time_start as string | number),
+          timeEnd: toUnix(args.time_end as string | number),
           budgetValue: args.budget_value as number,
           budgetValueType: args.budget_value_type as string | undefined,
           recurrenceType: args.recurrence_type as string | undefined,
@@ -525,121 +694,26 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       }
     }
   );
+}
 
-  // ─── Upload de mídia ──────────────────────────────────────────────────────────
-  server.tool(
-    "create_video",
-    "Envia um vídeo para a conta a partir de uma URL (a Meta baixa o arquivo). Retorna o video_id para usar no criativo. Lembre de pegar o thumbnail depois (GET {video_id}?fields=thumbnails).",
-    {
-      ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
-      file_url: z.string().describe("URL pública do arquivo de vídeo (.mp4 etc)."),
-      name: z.string().optional().describe("Nome interno do vídeo."),
-      title: z.string().optional().describe("Título do vídeo."),
-      description: z.string().optional().describe("Descrição do vídeo."),
-    },
-    async (args) => {
-      try {
-        const p = {
-          accountId: accountIdFrom(args),
-          fileUrl: args.file_url as string,
-          name: args.name as string | undefined,
-          title: args.title as string | undefined,
-          description: args.description as string | undefined,
-        };
-        const guard = previewGuard(args, "create_video", p);
-        if (guard) return guard;
-        return json(await client.createVideo(p));
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
-  );
-
-  server.tool(
-    "create_image",
-    "Envia uma imagem para a conta a partir de uma URL. Retorna o image_hash para usar em criativos (link_data.image_hash ou video_data.image_hash como thumbnail).",
-    {
-      ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
-      url: z.string().describe("URL pública da imagem (.jpg/.png/.webp)."),
-      name: z.string().optional().describe("Nome interno da imagem."),
-    },
-    async (args) => {
-      try {
-        const p = {
-          accountId: accountIdFrom(args),
-          url: args.url as string,
-          name: args.name as string | undefined,
-        };
-        const guard = previewGuard(args, "create_image", p);
-        if (guard) return guard;
-        return json(await client.createImage(p));
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
-  );
-
-  // ─── Públicos (criação) ───────────────────────────────────────────────────────
-  server.tool(
-    "create_custom_audience",
-    "Cria um público personalizado (vazio, para preencher depois, ou de regra). subtype padrão CUSTOM. Para website/pixel use subtype WEBSITE com regras à parte.",
-    {
-      ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
-      name: z.string().describe("Nome do público."),
-      subtype: z.string().optional().describe("Padrão CUSTOM. Outros: WEBSITE, ENGAGEMENT, etc."),
-      description: z.string().optional().describe("Descrição."),
-      customer_file_source: z
-        .string()
-        .optional()
-        .describe("Origem dos dados (ex: USER_PROVIDED_ONLY) quando for upload de lista."),
-    },
-    async (args) => {
-      try {
-        const p = {
-          accountId: accountIdFrom(args),
-          name: args.name as string,
-          subtype: args.subtype as string | undefined,
-          description: args.description as string | undefined,
-          customerFileSource: args.customer_file_source as string | undefined,
-        };
-        const guard = previewGuard(args, "create_custom_audience", p);
-        if (guard) return guard;
-        return json(await client.createCustomAudience(p));
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
-  );
-
-  server.tool(
-    "create_lookalike",
-    "Cria um público semelhante (lookalike) a partir de um público de origem. spec ex: {country:'BR', ratio:0.01} (1%).",
-    {
-      ...ACCOUNT_SCHEMA,
-      ...CONFIRM_SCHEMA,
-      name: z.string().describe("Nome do lookalike."),
-      source_audience_id: z.string().describe("ID do público de origem."),
-      spec: z
-        .record(z.unknown())
-        .describe("Spec do lookalike (ex: {country:'BR', ratio:0.01})."),
-    },
-    async (args) => {
-      try {
-        const p = {
-          accountId: accountIdFrom(args),
-          name: args.name as string,
-          sourceAudienceId: args.source_audience_id as string,
-          spec: args.spec as Record<string, unknown>,
-        };
-        const guard = previewGuard(args, "create_lookalike", p);
-        if (guard) return guard;
-        return json(await client.createLookalike(p));
-      } catch (e) {
-        return toolError((e as Error).message);
-      }
-    }
-  );
+/** Monta os params de createAdSet a partir de um objeto de args/config. */
+function adsetParamsFrom(a: Record<string, unknown>, accountId?: string) {
+  return {
+    accountId,
+    name: a["name"] as string,
+    campaignId: a["campaign_id"] as string,
+    optimizationGoal: a["optimization_goal"] as string,
+    billingEvent: a["billing_event"] as string | undefined,
+    bidStrategy: a["bid_strategy"] as string | undefined,
+    dailyBudget: a["daily_budget"] as number | undefined,
+    lifetimeBudget: a["lifetime_budget"] as number | undefined,
+    bidAmount: a["bid_amount"] as number | undefined,
+    targeting: (a["targeting"] ?? {}) as Record<string, unknown>,
+    promotedObject: a["promoted_object"] as Record<string, unknown> | undefined,
+    destinationType: a["destination_type"] as string | undefined,
+    attributionSpec: a["attribution_spec"] as unknown[] | undefined,
+    startTime: a["start_time"] as string | undefined,
+    endTime: a["end_time"] as string | undefined,
+    status: a["status"] as string | undefined,
+  };
 }

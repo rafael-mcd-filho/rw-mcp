@@ -914,12 +914,55 @@ export class MetaAdsClient {
   }): Promise<{ id: string }> {
     const acct = this.resolveAccount(p.accountId);
     const body: Record<string, unknown> = { name: p.name };
-    if (p.objectStorySpec) body["object_story_spec"] = p.objectStorySpec;
+    if (p.objectStorySpec) {
+      // Regra aprendida: vídeo exige thumbnail. Se o video_data não trouxe
+      // image_hash/image_url, busca o thumbnail preferido do próprio vídeo.
+      body["object_story_spec"] = await this.ensureVideoThumbnail(p.objectStorySpec);
+    }
     if (p.assetFeedSpec) body["asset_feed_spec"] = p.assetFeedSpec;
     if (p.instagramUserId) body["instagram_user_id"] = p.instagramUserId;
     if (p.urlTags) body["url_tags"] = p.urlTags;
     if (p.degreesOfFreedomSpec) body["degrees_of_freedom_spec"] = p.degreesOfFreedomSpec;
     return this.sendWrite<{ id: string }>(`${acct}/adcreatives`, body);
+  }
+
+  /** Se o object_story_spec tem video_data sem thumbnail, injeta o preferido. */
+  private async ensureVideoThumbnail(
+    spec: Record<string, unknown>
+  ): Promise<Record<string, unknown>> {
+    const vd = spec["video_data"] as Record<string, unknown> | undefined;
+    if (!vd || typeof vd !== "object") return spec;
+    const videoId = vd["video_id"] as string | undefined;
+    if (!videoId || vd["image_hash"] || vd["image_url"]) return spec;
+
+    const thumb = await this.getVideoThumbnail(videoId);
+    if (!thumb) return spec;
+    return { ...spec, video_data: { ...vd, image_url: thumb } };
+  }
+
+  /** URL do thumbnail preferido de um vídeo (ou o primeiro disponível). */
+  async getVideoThumbnail(videoId: string): Promise<string | null> {
+    try {
+      const res = await this.request<{
+        thumbnails?: { data?: Array<{ uri?: string; is_preferred?: boolean }> };
+      }>(videoId, { fields: "thumbnails" });
+      const thumbs = res.thumbnails?.data ?? [];
+      if (!thumbs.length) return null;
+      const preferred = thumbs.find((t) => t.is_preferred) ?? thumbs[0];
+      return preferred.uri ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Preview HTML (iframe) de um criativo num formato de posicionamento. */
+  async getCreativePreview(
+    creativeId: string,
+    adFormat = "INSTAGRAM_STORY"
+  ): Promise<unknown[]> {
+    return this.requestPaged<unknown>(`${creativeId}/previews`, {
+      ad_format: adFormat,
+    });
   }
 
   async createAd(p: {
