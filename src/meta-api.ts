@@ -1197,10 +1197,23 @@ export class MetaAdsClient {
       `${this.resolveAccount(accountId)}/customaudiences`,
       {
         fields:
-          "id,name,subtype,description,approximate_count_lower_bound,approximate_count_upper_bound,operation_status",
+          "id,name,subtype,description,retention_days,approximate_count_lower_bound,approximate_count_upper_bound,operation_status",
         limit: String(limit),
       }
     );
+  }
+
+  /**
+   * Detalhes de um público, incluindo a `rule` (regra de segmentação). É a fonte
+   * da verdade para descobrir os nomes de evento exatos usados pela conta
+   * (ex: eventos de pixel ou de engajamento do Instagram) antes de criar novos.
+   */
+  async getCustomAudience(id: string, fields?: string): Promise<unknown> {
+    return this.request<unknown>(id, {
+      fields:
+        fields ??
+        "id,name,subtype,description,rule,retention_days,pixel_id,approximate_count_lower_bound,approximate_count_upper_bound,operation_status",
+    });
   }
 
   async createCustomAudience(p: {
@@ -1209,6 +1222,9 @@ export class MetaAdsClient {
     subtype?: string;
     description?: string;
     customerFileSource?: string;
+    rule?: Record<string, unknown>;
+    prefill?: boolean;
+    retentionDays?: number;
   }): Promise<{ id: string }> {
     const acct = this.resolveAccount(p.accountId);
     const body: Record<string, unknown> = {
@@ -1217,6 +1233,12 @@ export class MetaAdsClient {
     };
     if (p.description) body["description"] = p.description;
     if (p.customerFileSource) body["customer_file_source"] = p.customerFileSource;
+    // Públicos de regra (WEBSITE/pixel, ENGAGEMENT, IG_BUSINESS): a `rule` define
+    // a fonte (event_sources) e o filtro de evento. Passada como objeto, igual a
+    // lookalike_spec — o sendWrite serializa o corpo em JSON.
+    if (p.rule) body["rule"] = p.rule;
+    if (p.prefill !== undefined) body["prefill"] = p.prefill;
+    if (p.retentionDays !== undefined) body["retention_days"] = p.retentionDays;
     return this.sendWrite<{ id: string }>(`${acct}/customaudiences`, body);
   }
 

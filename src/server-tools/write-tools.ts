@@ -464,7 +464,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   // ─── Públicos (criação — inerte, sem trava) ───────────────────────────────────
   server.tool(
     "create_custom_audience",
-    "Cria um público personalizado (vazio, para preencher depois, ou de regra). subtype padrão CUSTOM. Para website/pixel use subtype WEBSITE com regras à parte.",
+    "Cria um público personalizado (vazio, para preencher depois, ou de regra). subtype padrão CUSTOM. Para público de regra (pixel/site use WEBSITE; engajamento de Instagram use ENGAGEMENT) passe `rule` com a estrutura de segmentação. Dica: inspecione um público de regra existente com get_custom_audience para copiar os nomes de evento exatos.",
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do público."),
@@ -474,9 +474,31 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         .string()
         .optional()
         .describe("Origem dos dados (ex: USER_PROVIDED_ONLY) quando for upload de lista."),
+      rule: z
+        .string()
+        .optional()
+        .describe(
+          'Regra de segmentação em JSON (string). Ex pixel/Lead 180D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"id":"PIXEL_ID","type":"pixel"}],"retention_seconds":15552000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"Lead"}]}}]}}. Use get_custom_audience num público existente para copiar os nomes de evento exatos.'
+        ),
+      prefill: z
+        .boolean()
+        .optional()
+        .describe("Se true, inclui pessoas que já cumpriram a regra no passado (retroativo)."),
+      retention_days: z
+        .number()
+        .optional()
+        .describe("Janela de retenção em dias (regras simples; em regras flexíveis a janela vem do retention_seconds dentro da rule)."),
     },
     async (args) => {
       try {
+        let parsedRule: Record<string, unknown> | undefined;
+        if (args.rule !== undefined) {
+          try {
+            parsedRule = JSON.parse(args.rule as string);
+          } catch {
+            return toolError("Parâmetro `rule` inválido: não é um JSON válido.");
+          }
+        }
         return json(
           await client.createCustomAudience({
             accountId: accountIdFrom(args),
@@ -484,6 +506,9 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
             subtype: args.subtype as string | undefined,
             description: args.description as string | undefined,
             customerFileSource: args.customer_file_source as string | undefined,
+            rule: parsedRule,
+            prefill: args.prefill as boolean | undefined,
+            retentionDays: args.retention_days as number | undefined,
           })
         );
       } catch (e) {

@@ -777,6 +777,22 @@ export function createMcpServer(
   );
 
   server.tool(
+    "get_custom_audience",
+    "Detalhes de um público pelo ID, incluindo a `rule` (regra de segmentação). Use para inspecionar a estrutura exata de um público de regra existente (eventos de pixel ou de engajamento do Instagram) e reusar como base ao criar novos.",
+    {
+      audience_id: z.string().describe("ID do público personalizado."),
+      fields: z.string().optional().describe("Campos específicos (opcional)."),
+    },
+    async (args) =>
+      json(
+        await client.getCustomAudience(
+          args.audience_id as string,
+          args.fields as string | undefined
+        )
+      )
+  );
+
+  server.tool(
     "get_creative",
     "Detalhes de um criativo pelo ID (object_story_spec, asset_feed_spec, url_tags, instagram_user_id, etc). Útil para inspecionar ou reusar a configuração de um criativo existente.",
     {
