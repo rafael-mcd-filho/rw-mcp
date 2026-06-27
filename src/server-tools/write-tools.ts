@@ -471,6 +471,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       "ESTRUTURA da rule (JSON em string). Vários critérios em OR = vários objetos em `rules`,",
       "mas SOMENTE da mesma fonte (IG+IG ou pixel+pixel). Misturar pixel+IG no mesmo público NÃO",
       "é suportado — para cruzar site+Insta, crie 2 públicos e combine no conjunto de anúncios. `id` vai numérico.",
+      "LIMITE: máximo 5 objetos no array `rules` por público (restrição da API do Meta).",
+      "IDs acima de 9007199254740991 (MAX_SAFE_INTEGER) devem ser passados como string no JSON da rule (ex: \"id\":\"9213538382023165\") para evitar perda de precisão.",
       '{"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"<pixel|ig_business>","id":<ID>}],"retention_seconds":<seg>,"filter":{...}}]}}',
       "",
       "EVENTOS INSTAGRAM (type=ig_business, filter event eq <value>) — literais universais:",
@@ -515,10 +517,11 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     },
     async (args) => {
       try {
-        let parsedRule: Record<string, unknown> | undefined;
+        let ruleString: string | undefined;
         if (args.rule !== undefined) {
           try {
-            parsedRule = JSON.parse(args.rule as string);
+            JSON.parse(args.rule as string); // valida apenas; descarta resultado para preservar precisão de inteiros grandes
+            ruleString = args.rule as string;
           } catch {
             return toolError("Parâmetro `rule` inválido: não é um JSON válido.");
           }
@@ -530,7 +533,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
             subtype: args.subtype as string | undefined,
             description: args.description as string | undefined,
             customerFileSource: args.customer_file_source as string | undefined,
-            rule: parsedRule,
+            rule: ruleString,
             prefill: args.prefill as boolean | undefined,
             retentionDays: args.retention_days as number | undefined,
           })

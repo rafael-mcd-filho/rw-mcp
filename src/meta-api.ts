@@ -1222,7 +1222,7 @@ export class MetaAdsClient {
     subtype?: string;
     description?: string;
     customerFileSource?: string;
-    rule?: Record<string, unknown>;
+    rule?: string;
     prefill?: boolean;
     retentionDays?: number;
   }): Promise<{ id: string }> {
