@@ -770,6 +770,30 @@ export function createMcpServer(
   );
 
   server.tool(
+    "list_ig_media",
+    "Lista mídias orgânicas de um perfil do Instagram (id, media_type, timestamp, caption, permalink). Use para obter os IDs de vídeos a incluir em públicos personalizados de engajamento de vídeo. O ig_user_id é o ig_business ID — o mesmo usado nas rules de públicos IG (ex: 7399517663443204 para Recife).",
+    {
+      ig_user_id: z.string().describe("ID do perfil do Instagram (ig_business ID)."),
+      since_date: z
+        .string()
+        .optional()
+        .describe("Filtrar mídias publicadas a partir desta data (YYYY-MM-DD). Opcional."),
+      media_type: z
+        .string()
+        .optional()
+        .describe("Filtrar por tipo: VIDEO, IMAGE, REELS, CAROUSEL_ALBUM. Opcional."),
+    },
+    async (args) =>
+      json(
+        await client.listIgMedia(
+          args.ig_user_id as string,
+          args.since_date as string | undefined,
+          args.media_type as string | undefined
+        )
+      )
+  );
+
+  server.tool(
     "list_custom_audiences",
     "Lista os públicos personalizados da conta (id, nome, subtype, tamanho aproximado). Use para escolher públicos a incluir ou excluir no targeting.",
     { ...ACCOUNT_ID_SCHEMA },

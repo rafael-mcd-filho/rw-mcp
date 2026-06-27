@@ -1141,6 +1141,31 @@ export class MetaAdsClient {
     });
   }
 
+  /** Lista mídias orgânicas de um perfil IG. Filtra client-side por data e tipo.
+   *  sinceDate: YYYY-MM-DD. mediaType: VIDEO | IMAGE | REELS | CAROUSEL_ALBUM. */
+  async listIgMedia(
+    igUserId: string,
+    sinceDate?: string,
+    mediaType?: string
+  ): Promise<unknown[]> {
+    const items = await this.requestPaged<Record<string, unknown>>(
+      `${igUserId}/media`,
+      { fields: "id,media_type,timestamp,caption,permalink", limit: "100" }
+    );
+    let filtered = items;
+    if (sinceDate) {
+      const since = new Date(sinceDate).getTime();
+      filtered = filtered.filter(
+        (m) => new Date(m["timestamp"] as string).getTime() >= since
+      );
+    }
+    if (mediaType) {
+      const type = mediaType.toUpperCase();
+      filtered = filtered.filter((m) => m["media_type"] === type);
+    }
+    return filtered;
+  }
+
   /** Envia um vídeo a partir de uma URL (a Meta baixa o arquivo server-side). */
   async createVideo(p: {
     accountId?: string;
