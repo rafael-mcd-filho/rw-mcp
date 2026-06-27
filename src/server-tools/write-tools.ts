@@ -464,7 +464,31 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   // ─── Públicos (criação — inerte, sem trava) ───────────────────────────────────
   server.tool(
     "create_custom_audience",
-    "Cria um público personalizado (vazio, para preencher depois, ou de regra). subtype padrão CUSTOM. Para público de regra (pixel/site use WEBSITE; engajamento de Instagram use ENGAGEMENT) passe `rule` com a estrutura de segmentação. Dica: inspecione um público de regra existente com get_custom_audience para copiar os nomes de evento exatos.",
+    [
+      "Cria um público personalizado. Sem `rule` = público vazio (preencher depois ou upload de lista).",
+      "Com `rule` = público de regra. subtype: WEBSITE (pixel/site) ou IG_BUSINESS (engajamento Instagram).",
+      "",
+      "ESTRUTURA da rule (JSON em string). Vários critérios em OR = vários objetos em `rules`,",
+      "mas SOMENTE da mesma fonte (IG+IG ou pixel+pixel). Misturar pixel+IG no mesmo público NÃO",
+      "é suportado — para cruzar site+Insta, crie 2 públicos e combine no conjunto de anúncios. `id` vai numérico.",
+      '{"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"<pixel|ig_business>","id":<ID>}],"retention_seconds":<seg>,"filter":{...}}]}}',
+      "",
+      "EVENTOS INSTAGRAM (type=ig_business, filter event eq <value>) — literais universais:",
+      "- ig_business_profile_all = interagiu com a conta profissional",
+      "- ig_business_profile_visit = visitou o perfil",
+      "- ig_business_profile_engaged = interagiu com qualquer post/anúncio",
+      "- ig_business_profile_user_messaged = enviou mensagem",
+      "- ig_business_profile_ad_saved = salvou post/anúncio",
+      "- INSTAGRAM_PROFILE_FOLLOW = começou a seguir (MAIÚSCULO; usar retention_seconds 0)",
+      "",
+      "EVENTOS PIXEL/SITE (type=pixel):",
+      '- evento padrão: filter {"field":"event","operator":"eq","value":"Lead"} (ou Purchase/InitiateCheckout/ViewContent)',
+      '- todos os visitantes: filter {"field":"url","operator":"i_contains","value":""} + adicionar "template":"ALL_VISITORS" no objeto da regra (NÃO é event=PageView)',
+      "",
+      "retention_seconds: 7D=604800 15D=1296000 30D=2592000 60D=5184000 90D=7776000 180D=15552000 365D=31536000.",
+      "Os IDs (pixel, ig_business) são por conta: pegue com get_custom_audience num público existente ou list_pixels.",
+      "Dúvida sobre algum literal? Inspecione um público real com get_custom_audience e copie a rule.",
+    ].join("\n"),
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do público."),
@@ -478,7 +502,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         .string()
         .optional()
         .describe(
-          'Regra de segmentação em JSON (string). Ex pixel/Lead 180D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"id":"PIXEL_ID","type":"pixel"}],"retention_seconds":15552000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"Lead"}]}}]}}. Use get_custom_audience num público existente para copiar os nomes de evento exatos.'
+          'Regra de segmentação em JSON (string). Ex pixel/Lead 180D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"pixel","id":959959936733237}],"retention_seconds":15552000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"Lead"}]}}]}}. Ex IG visitou perfil 90D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"ig_business","id":7216187821753505}],"retention_seconds":7776000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"ig_business_profile_visit"}]}}]}}. Combinar = mais objetos em rules (mesma fonte). Ver dicionário de eventos na descrição do tool; copie literais de um público real com get_custom_audience.'
         ),
       prefill: z
         .boolean()
