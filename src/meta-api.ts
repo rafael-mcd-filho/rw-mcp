@@ -1227,16 +1227,17 @@ export class MetaAdsClient {
     retentionDays?: number;
   }): Promise<{ id: string }> {
     const acct = this.resolveAccount(p.accountId);
-    const body: Record<string, unknown> = {
-      name: p.name,
-      subtype: p.subtype ?? "CUSTOM",
-    };
+    const body: Record<string, unknown> = { name: p.name };
+    // Com rule, a API infere o subtype automaticamente a partir da fonte
+    // (event_sources type "pixel" → WEBSITE; "ig_business" → IG_BUSINESS).
+    // Passar subtype explicitamente causa erro. Sem rule, default CUSTOM.
+    if (p.rule) {
+      body["rule"] = p.rule;
+    } else {
+      body["subtype"] = p.subtype ?? "CUSTOM";
+    }
     if (p.description) body["description"] = p.description;
     if (p.customerFileSource) body["customer_file_source"] = p.customerFileSource;
-    // Públicos de regra (WEBSITE/pixel, ENGAGEMENT, IG_BUSINESS): a `rule` define
-    // a fonte (event_sources) e o filtro de evento. Passada como objeto, igual a
-    // lookalike_spec — o sendWrite serializa o corpo em JSON.
-    if (p.rule) body["rule"] = p.rule;
     if (p.prefill !== undefined) body["prefill"] = p.prefill;
     if (p.retentionDays !== undefined) body["retention_days"] = p.retentionDays;
     return this.sendWrite<{ id: string }>(`${acct}/customaudiences`, body);

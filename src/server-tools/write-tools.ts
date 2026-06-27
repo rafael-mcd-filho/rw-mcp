@@ -466,7 +466,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     "create_custom_audience",
     [
       "Cria um público personalizado. Sem `rule` = público vazio (preencher depois ou upload de lista).",
-      "Com `rule` = público de regra. subtype: WEBSITE (pixel/site) ou IG_BUSINESS (engajamento Instagram).",
+      "Com `rule` = público de regra. NÃO passar subtype — a API infere automaticamente (pixel→WEBSITE, ig_business→IG_BUSINESS). Passar subtype com rule causa erro.",
       "",
       "ESTRUTURA da rule (JSON em string). Vários critérios em OR = vários objetos em `rules`,",
       "mas SOMENTE da mesma fonte (IG+IG ou pixel+pixel). Misturar pixel+IG no mesmo público NÃO",
