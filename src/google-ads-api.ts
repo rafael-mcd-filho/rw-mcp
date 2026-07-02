@@ -62,7 +62,7 @@ async function getAccessToken(): Promise<string> {
   return cachedAccessToken;
 }
 
-async function gaqlSearch<T>(customerId: string, query: string): Promise<T[]> {
+async function authHeaders(): Promise<Record<string, string>> {
   const accessToken = await getAccessToken();
   const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
   const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? "").replace(/-/g, "");
@@ -75,6 +75,60 @@ async function gaqlSearch<T>(customerId: string, query: string): Promise<T[]> {
     "developer-token": devToken,
   };
   if (loginCustomerId) headers["login-customer-id"] = loginCustomerId;
+  return headers;
+}
+
+/** Executa uma operação de mutate (create/update/remove) num recurso REST v23. */
+async function mutate(
+  customerId: string,
+  resource: string,
+  operations: Record<string, unknown>[]
+): Promise<{ resourceName: string }[]> {
+  const headers = await authHeaders();
+
+  const res = await fetch(
+    `${GOOGLE_ADS_BASE}/customers/${customerId}/${resource}:mutate`,
+    { method: "POST", headers, body: JSON.stringify({ operations }) }
+  );
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google Ads mutate ${resource} (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as { results?: { resourceName: string }[] };
+  return data.results ?? [];
+}
+
+// ─── Resource names ─────────────────────────────────────────────────────────
+
+const campaignPath = (cid: string, id: string) => `customers/${cid}/campaigns/${id}`;
+const adGroupPath = (cid: string, id: string) => `customers/${cid}/adGroups/${id}`;
+const adGroupCriterionPath = (cid: string, adGroupId: string, criterionId: string) =>
+  `customers/${cid}/adGroupCriteria/${adGroupId}~${criterionId}`;
+const campaignCriterionPath = (cid: string, campaignId: string, criterionId: string) =>
+  `customers/${cid}/campaignCriteria/${campaignId}~${criterionId}`;
+const adGroupAdPath = (cid: string, adGroupId: string, adId: string) =>
+  `customers/${cid}/adGroupAds/${adGroupId}~${adId}`;
+
+/** Converte reais (número ou string) em micros como STRING (REST v23 exige int64 como string). */
+function toMicrosStr(reais: number | string): string {
+  return String(Math.round(safeFloat(reais) * 1_000_000));
+}
+
+/** Converte centavos em micros como STRING. */
+function centavosToMicrosStr(centavos: number | string): string {
+  return String(Math.round(safeFloat(centavos) * 10_000));
+}
+
+function matchTypeEnum(matchType?: string): "EXACT" | "PHRASE" | "BROAD" {
+  const mt = (matchType ?? "PHRASE").toUpperCase();
+  if (mt === "EXACT" || mt === "PHRASE" || mt === "BROAD") return mt;
+  return "PHRASE";
+}
+
+async function gaqlSearch<T>(customerId: string, query: string): Promise<T[]> {
+  const headers = await authHeaders();
 
   const results: T[] = [];
   let pageToken: string | undefined;
@@ -703,18 +757,7 @@ async function keywordPlannerRequest<T>(
   method: string,
   body: Record<string, unknown>
 ): Promise<T> {
-  const accessToken = await getAccessToken();
-  const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-  const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ?? "").replace(/-/g, "");
-
-  if (!devToken) throw new Error("GOOGLE_ADS_DEVELOPER_TOKEN é obrigatório.");
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${accessToken}`,
-    "developer-token": devToken,
-  };
-  if (loginCustomerId) headers["login-customer-id"] = loginCustomerId;
+  const headers = await authHeaders();
 
   const res = await fetch(
     `${GOOGLE_ADS_BASE}/customers/${customerId}:${method}`,
@@ -997,4 +1040,738 @@ export async function getGoogleAdsSearchTerms(
     ctr: r2(safeFloat(r.metrics?.ctr) * 100),
     cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
   }));
+}
+
+// ─── Escrita: criação, edição e exclusão (Search apenas) ────────────────────
+// Espelha os scripts create.py/update.py/delete.py da skill google-ads-ratos,
+// mas via REST v23 (sem SDK Python). Toda criação de campanha/ad group/anúncio
+// nasce PAUSED — ativar é ação separada (update_status).
+
+export interface GMutationResult {
+  status: string;
+  resource_name: string;
+  [key: string]: unknown;
+}
+
+// ── Create ───────────────────────────────────────────────────────────────
+
+export async function createGoogleAdsCampaign(
+  customerId: string,
+  params: {
+    name: string;
+    dailyBudgetCentavos: number | string;
+    targetCpaReais?: number | string;
+    maximizeConversions?: boolean;
+    maximizeConversionValue?: boolean;
+    targetRoas?: number;
+    targetImpressionShareLocation?: "ANYWHERE_ON_PAGE" | "TOP_OF_PAGE" | "ABSOLUTE_TOP_OF_PAGE";
+    targetImpressionSharePercent?: number;
+    manualCpc?: boolean;
+    cpcBidCeilingReais?: number | string;
+    targetSearchPartners?: boolean;
+    locationTargetingType?: "PRESENCE" | "PRESENCE_OR_INTEREST";
+    disableAiAutomation?: boolean;
+  }
+): Promise<GMutationResult> {
+  const budgetResults = await mutate(customerId, "campaignBudgets", [{
+    create: {
+      name: `Budget-${params.name}-${Date.now()}`,
+      amountMicros: centavosToMicrosStr(params.dailyBudgetCentavos),
+      deliveryMethod: "STANDARD",
+    },
+  }]);
+  const budgetResource = budgetResults[0]?.resourceName;
+  if (!budgetResource) throw new Error("Falha ao criar orçamento da campanha.");
+
+  const campaign: Record<string, unknown> = {
+    name: params.name,
+    campaignBudget: budgetResource,
+    status: "PAUSED",
+    containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
+    advertisingChannelType: "SEARCH",
+    networkSettings: {
+      targetGoogleSearch: true,
+      targetSearchNetwork: params.targetSearchPartners ?? true,
+    },
+  };
+
+  // Padrão: desliga automação por IA (personalização de texto via IA e expansão
+  // de URL final automática) — confirmado ao vivo: campaign.assetAutomationSettings
+  // é um array de {assetAutomationType, assetAutomationStatus}; campanha real do
+  // MCC tem TEXT_ASSET_AUTOMATION=OPTED_OUT. FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION
+  // confirmado só via proto oficial (nenhuma campanha do MCC opta por ela hoje).
+  if (params.disableAiAutomation ?? true) {
+    campaign.assetAutomationSettings = [
+      { assetAutomationType: "TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_OUT" },
+      { assetAutomationType: "FINAL_URL_EXPANSION_TEXT_ASSET_AUTOMATION", assetAutomationStatus: "OPTED_OUT" },
+    ];
+  }
+
+  if (params.locationTargetingType) {
+    campaign.geoTargetTypeSetting = { positiveGeoTargetType: params.locationTargetingType };
+  }
+
+  // Prioridade (mutuamente exclusivos): Maximizar Valor da Conversão (teto de ROAS
+  // opcional) > Target ROAS estrito > Parcela de Impressões Desejada > Maximizar
+  // Conversões (teto de CPA opcional) > Target CPA estrito > CPC Manual (só se
+  // pedido explicitamente) > Maximizar Cliques (PADRÃO).
+  // Maximizar Cliques como fallback é mais seguro que CPC Manual: CPC Manual sem
+  // lance configurado em nenhum nível (ad group/keyword) trava a campanha, que não
+  // consegue gastar nada mesmo ativada. Confirmado contra campanhas reais do MCC:
+  // TARGET_SPEND = { cpcBidCeilingMicros }, MAXIMIZE_CONVERSIONS aceita targetCpaMicros
+  // opcional como teto "soft" (visto em campanhas reais rodando com os dois juntos).
+  // TARGET_ROAS/MAXIMIZE_CONVERSION_VALUE/TARGET_IMPRESSION_SHARE NÃO foram
+  // confirmados ao vivo (nenhuma campanha do MCC usa essas 3 estratégias hoje) —
+  // implementados só com base em documentação estável da API.
+  if (params.maximizeConversionValue) {
+    campaign.maximizeConversionValue = params.targetRoas != null ? { targetRoas: params.targetRoas } : {};
+  } else if (params.targetRoas != null) {
+    const targetRoas: Record<string, unknown> = { targetRoas: params.targetRoas };
+    if (params.cpcBidCeilingReais != null) targetRoas.cpcBidCeilingMicros = toMicrosStr(params.cpcBidCeilingReais);
+    campaign.targetRoas = targetRoas;
+  } else if (params.targetImpressionShareLocation) {
+    const targetImpressionShare: Record<string, unknown> = {
+      location: params.targetImpressionShareLocation,
+      locationFractionMicros: String(Math.round(((params.targetImpressionSharePercent ?? 100) / 100) * 1_000_000)),
+    };
+    if (params.cpcBidCeilingReais != null) {
+      targetImpressionShare.cpcBidCeilingMicros = toMicrosStr(params.cpcBidCeilingReais);
+    }
+    campaign.targetImpressionShare = targetImpressionShare;
+  } else if (params.maximizeConversions) {
+    campaign.maximizeConversions =
+      params.targetCpaReais != null ? { targetCpaMicros: toMicrosStr(params.targetCpaReais) } : {};
+  } else if (params.targetCpaReais != null) {
+    campaign.targetCpa = { targetCpaMicros: toMicrosStr(params.targetCpaReais) };
+  } else if (params.manualCpc) {
+    campaign.manualCpc = { enhancedCpcEnabled: false };
+  } else {
+    campaign.targetSpend =
+      params.cpcBidCeilingReais != null ? { cpcBidCeilingMicros: toMicrosStr(params.cpcBidCeilingReais) } : {};
+  }
+
+  const results = await mutate(customerId, "campaigns", [{ create: campaign }]);
+
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    budget_resource: budgetResource,
+    campaign_name: params.name,
+    nota: "Campanha criada com status PAUSED. Revise antes de ativar.",
+  };
+}
+
+// ── Segmentação: geo, idioma, agenda de anúncios ─────────────────────────
+
+export interface GGeoTargetSuggestion {
+  id: string;
+  nome: string;
+  nome_canonico: string;
+  pais: string;
+  tipo: string;
+}
+
+/** Busca geo target constants por nome (ex: "São Paulo") via GeoTargetConstantService.SuggestGeoTargetConstants. */
+export async function searchGoogleAdsGeoTargets(
+  names: string[],
+  countryCode?: string
+): Promise<GGeoTargetSuggestion[]> {
+  const headers = await authHeaders();
+  const body: Record<string, unknown> = { locationNames: { names } };
+  if (countryCode) body.countryCode = countryCode;
+
+  const res = await fetch(`${GOOGLE_ADS_BASE}/geoTargetConstants:suggest`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Google Ads geoTargetConstants:suggest (${res.status}): ${err}`);
+  }
+
+  const data = (await res.json()) as {
+    geoTargetConstantSuggestions?: Array<{
+      geoTargetConstant?: { id?: string; name?: string; canonicalName?: string; countryCode?: string; targetType?: string };
+    }>;
+  };
+
+  return (data.geoTargetConstantSuggestions ?? []).map((s) => ({
+    id: s.geoTargetConstant?.id ?? "",
+    nome: s.geoTargetConstant?.name ?? "",
+    nome_canonico: s.geoTargetConstant?.canonicalName ?? "",
+    pais: s.geoTargetConstant?.countryCode ?? "",
+    tipo: s.geoTargetConstant?.targetType ?? "",
+  }));
+}
+
+export async function addGoogleAdsLocationTargets(
+  customerId: string,
+  params: { campaignId: string; geoTargetConstantIds: string[]; negative?: boolean }
+): Promise<GMutationResult> {
+  const operations = params.geoTargetConstantIds.map((id) => ({
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      negative: params.negative ?? false,
+      location: { geoTargetConstant: `geoTargetConstants/${id}` },
+    },
+  }));
+
+  const results = await mutate(customerId, "campaignCriteria", operations);
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    resource_names: results.map((r) => r.resourceName),
+    geo_target_constant_ids: params.geoTargetConstantIds,
+    negative: params.negative ?? false,
+  };
+}
+
+export async function addGoogleAdsLanguageTargets(
+  customerId: string,
+  params: { campaignId: string; languageConstantIds: string[] }
+): Promise<GMutationResult> {
+  const operations = params.languageConstantIds.map((id) => ({
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      language: { languageConstant: `languageConstants/${id}` },
+    },
+  }));
+
+  const results = await mutate(customerId, "campaignCriteria", operations);
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    resource_names: results.map((r) => r.resourceName),
+    language_constant_ids: params.languageConstantIds,
+  };
+}
+
+const AD_SCHEDULE_MINUTE_ENUM: Record<number, string> = {
+  0: "ZERO",
+  15: "FIFTEEN",
+  30: "THIRTY",
+  45: "FORTY_FIVE",
+};
+
+export interface GAdScheduleSlot {
+  dayOfWeek: "MONDAY" | "TUESDAY" | "WEDNESDAY" | "THURSDAY" | "FRIDAY" | "SATURDAY" | "SUNDAY";
+  startHour: number;
+  startMinute?: number;
+  endHour: number;
+  endMinute?: number;
+}
+
+export async function addGoogleAdsAdSchedule(
+  customerId: string,
+  params: { campaignId: string; schedule: GAdScheduleSlot[] }
+): Promise<GMutationResult> {
+  const operations = params.schedule.map((slot) => {
+    const startMinute = AD_SCHEDULE_MINUTE_ENUM[slot.startMinute ?? 0];
+    const endMinute = AD_SCHEDULE_MINUTE_ENUM[slot.endMinute ?? 0];
+    if (!startMinute || !endMinute) {
+      throw new Error("startMinute/endMinute devem ser 0, 15, 30 ou 45.");
+    }
+    return {
+      create: {
+        campaign: campaignPath(customerId, params.campaignId),
+        adSchedule: {
+          dayOfWeek: slot.dayOfWeek,
+          startHour: slot.startHour,
+          startMinute,
+          endHour: slot.endHour,
+          endMinute,
+        },
+      },
+    };
+  });
+
+  const results = await mutate(customerId, "campaignCriteria", operations);
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    resource_names: results.map((r) => r.resourceName),
+    slots_criadas: params.schedule.length,
+  };
+}
+
+export async function createGoogleAdsAdGroup(
+  customerId: string,
+  params: { campaignId: string; name: string; cpcBidReais?: number | string }
+): Promise<GMutationResult> {
+  const adGroup: Record<string, unknown> = {
+    name: params.name,
+    campaign: campaignPath(customerId, params.campaignId),
+    status: "PAUSED",
+    type: "SEARCH_STANDARD",
+  };
+  if (params.cpcBidReais != null) adGroup.cpcBidMicros = toMicrosStr(params.cpcBidReais);
+
+  const results = await mutate(customerId, "adGroups", [{ create: adGroup }]);
+
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    ad_group_name: params.name,
+    nota: "Ad group criado com status PAUSED.",
+  };
+}
+
+export async function addGoogleAdsKeyword(
+  customerId: string,
+  params: { adGroupId: string; text: string; matchType?: string; bidReais?: number | string }
+): Promise<GMutationResult> {
+  const matchType = matchTypeEnum(params.matchType);
+  const criterion: Record<string, unknown> = {
+    adGroup: adGroupPath(customerId, params.adGroupId),
+    status: "ENABLED",
+    keyword: { text: params.text, matchType },
+  };
+  if (params.bidReais != null) criterion.cpcBidMicros = toMicrosStr(params.bidReais);
+
+  const results = await mutate(customerId, "adGroupCriteria", [{ create: criterion }]);
+
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    keyword: params.text,
+    match_type: matchType,
+  };
+}
+
+export async function createGoogleAdsRsa(
+  customerId: string,
+  params: {
+    adGroupId: string;
+    headlines: string[];
+    descriptions: string[];
+    finalUrl: string;
+    path1?: string;
+    path2?: string;
+  }
+): Promise<GMutationResult> {
+  const headlines = params.headlines.filter((h) => h.trim()).slice(0, 15).map((text) => ({ text }));
+  const descriptions = params.descriptions.filter((d) => d.trim()).slice(0, 4).map((text) => ({ text }));
+
+  if (headlines.length === 0) throw new Error("Informe ao menos 1 headline.");
+  if (descriptions.length === 0) throw new Error("Informe ao menos 1 description.");
+
+  const responsiveSearchAd: Record<string, unknown> = { headlines, descriptions };
+  if (params.path1) responsiveSearchAd.path1 = params.path1;
+  if (params.path2) responsiveSearchAd.path2 = params.path2;
+
+  const results = await mutate(customerId, "adGroupAds", [{
+    create: {
+      adGroup: adGroupPath(customerId, params.adGroupId),
+      status: "PAUSED",
+      ad: { finalUrls: [params.finalUrl], responsiveSearchAd },
+    },
+  }]);
+
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    headlines_count: headlines.length,
+    descriptions_count: descriptions.length,
+    nota: "RSA criado com status PAUSED. Revise antes de ativar.",
+  };
+}
+
+export async function createGoogleAdsSitelink(
+  customerId: string,
+  params: { campaignId: string; text: string; url: string; desc1?: string; desc2?: string }
+): Promise<GMutationResult> {
+  const assetResults = await mutate(customerId, "assets", [{
+    create: {
+      sitelinkAsset: {
+        linkText: params.text,
+        description1: params.desc1 ?? "",
+        description2: params.desc2 ?? "",
+      },
+      finalUrls: [params.url],
+    },
+  }]);
+  const assetResource = assetResults[0]?.resourceName;
+  if (!assetResource) throw new Error("Falha ao criar sitelink asset.");
+
+  const linkResults = await mutate(customerId, "campaignAssets", [{
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      asset: assetResource,
+      fieldType: "SITELINK",
+    },
+  }]);
+
+  return {
+    status: "created",
+    resource_name: linkResults[0]?.resourceName ?? "",
+    asset_resource: assetResource,
+    sitelink_text: params.text,
+  };
+}
+
+export async function createGoogleAdsCallout(
+  customerId: string,
+  params: { campaignId: string; text: string }
+): Promise<GMutationResult> {
+  const assetResults = await mutate(customerId, "assets", [{
+    create: { calloutAsset: { calloutText: params.text } },
+  }]);
+  const assetResource = assetResults[0]?.resourceName;
+  if (!assetResource) throw new Error("Falha ao criar callout asset.");
+
+  const linkResults = await mutate(customerId, "campaignAssets", [{
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      asset: assetResource,
+      fieldType: "CALLOUT",
+    },
+  }]);
+
+  return {
+    status: "created",
+    resource_name: linkResults[0]?.resourceName ?? "",
+    asset_resource: assetResource,
+    callout_text: params.text,
+  };
+}
+
+export interface GAssetSummary {
+  resource_name: string;
+  id: string;
+  texto: string;
+}
+
+/** Lista sitelinks ou callouts já existentes na conta (biblioteca de assets), pra reaproveitar em vez de criar de novo. */
+export async function listGoogleAdsAssets(
+  customerId: string,
+  type: "SITELINK" | "CALLOUT"
+): Promise<GAssetSummary[]> {
+  const field = type === "SITELINK" ? "asset.sitelink_asset.link_text" : "asset.callout_asset.callout_text";
+  const rows = await gaqlSearch<{
+    asset: { resourceName: string; id: string; sitelinkAsset?: { linkText?: string }; calloutAsset?: { calloutText?: string } };
+  }>(customerId, `
+    SELECT asset.resource_name, asset.id, ${field}
+    FROM asset
+    WHERE asset.type = '${type}'
+  `);
+
+  return rows.map((r) => ({
+    resource_name: r.asset?.resourceName ?? "",
+    id: r.asset?.id ?? "",
+    texto: (type === "SITELINK" ? r.asset?.sitelinkAsset?.linkText : r.asset?.calloutAsset?.calloutText) ?? "",
+  }));
+}
+
+/** Vincula um asset (sitelink/callout) já existente a uma campanha, sem criar um novo. */
+export async function attachGoogleAdsAsset(
+  customerId: string,
+  params: { campaignId: string; assetResourceName: string; fieldType: "SITELINK" | "CALLOUT" }
+): Promise<GMutationResult> {
+  const results = await mutate(customerId, "campaignAssets", [{
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      asset: params.assetResourceName,
+      fieldType: params.fieldType,
+    },
+  }]);
+
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    asset_resource: params.assetResourceName,
+    field_type: params.fieldType,
+  };
+}
+
+// ── Mensagem WhatsApp (BusinessMessageAsset) ─────────────────────────────
+// Confirmado ao vivo contra o anúncio ativo da Batista Rastreamento + proto oficial
+// (asset_types.proto): asset.type = "BUSINESS_MESSAGE" (NÃO "MESSAGE" — esse valor
+// não existe), campaignAsset.fieldType = "BUSINESS_MESSAGE".
+
+export async function createGoogleAdsWhatsappMessage(
+  customerId: string,
+  params: {
+    campaignId: string;
+    countryCode: string;
+    phoneNumber: string;
+    starterMessage: string;
+    callToActionSelection: string;
+    callToActionDescription: string;
+  }
+): Promise<GMutationResult> {
+  const assetResults = await mutate(customerId, "assets", [{
+    create: {
+      businessMessageAsset: {
+        messageProvider: "WHATSAPP",
+        starterMessage: params.starterMessage,
+        callToAction: {
+          callToActionSelection: params.callToActionSelection,
+          callToActionDescription: params.callToActionDescription,
+        },
+        whatsappInfo: { countryCode: params.countryCode, phoneNumber: params.phoneNumber },
+      },
+    },
+  }]);
+  const assetResource = assetResults[0]?.resourceName;
+  if (!assetResource) throw new Error("Falha ao criar business message asset (WhatsApp).");
+
+  const linkResults = await mutate(customerId, "campaignAssets", [{
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      asset: assetResource,
+      fieldType: "BUSINESS_MESSAGE",
+    },
+  }]);
+
+  return {
+    status: "created",
+    resource_name: linkResults[0]?.resourceName ?? "",
+    asset_resource: assetResource,
+  };
+}
+
+// ── Metas de conversão específicas da campanha ────────────────────────────
+// Confirmado ao vivo (GAQL campaign_conversion_goal) + proto oficial
+// (campaign_conversion_goal.proto): resourceName
+// "customers/{cid}/campaignConversionGoals/{campaignId}~{category}~{origin}",
+// campo mutável é só "biddable".
+
+export interface GCampaignConversionGoal {
+  category: string;
+  origin: string;
+  biddable: boolean;
+}
+
+export async function listGoogleAdsCampaignConversionGoals(
+  customerId: string,
+  campaignId: string
+): Promise<GCampaignConversionGoal[]> {
+  const rows = await gaqlSearch<{
+    campaignConversionGoal: { category?: string; origin?: string; biddable?: boolean };
+  }>(customerId, `
+    SELECT campaign_conversion_goal.category, campaign_conversion_goal.origin, campaign_conversion_goal.biddable
+    FROM campaign_conversion_goal
+    WHERE campaign.id = ${campaignId}
+  `);
+
+  return rows.map((r) => ({
+    category: r.campaignConversionGoal?.category ?? "",
+    origin: r.campaignConversionGoal?.origin ?? "",
+    biddable: r.campaignConversionGoal?.biddable ?? false,
+  }));
+}
+
+const campaignConversionGoalPath = (cid: string, campaignId: string, category: string, origin: string) =>
+  `customers/${cid}/campaignConversionGoals/${campaignId}~${category}~${origin}`;
+
+export async function setGoogleAdsCampaignConversionGoal(
+  customerId: string,
+  params: { campaignId: string; category: string; origin: string; biddable: boolean }
+): Promise<GMutationResult> {
+  const resourceName = campaignConversionGoalPath(customerId, params.campaignId, params.category, params.origin);
+  const results = await mutate(customerId, "campaignConversionGoals", [{
+    update: { resourceName, biddable: params.biddable },
+    updateMask: "biddable",
+  }]);
+  return {
+    status: "updated",
+    resource_name: results[0]?.resourceName ?? resourceName,
+    biddable: params.biddable,
+  };
+}
+
+export async function addGoogleAdsNegativeKeyword(
+  customerId: string,
+  params: { campaignId?: string; adGroupId?: string; text: string; matchType?: string }
+): Promise<GMutationResult> {
+  const matchType = matchTypeEnum(params.matchType);
+
+  if (params.adGroupId) {
+    const results = await mutate(customerId, "adGroupCriteria", [{
+      create: {
+        adGroup: adGroupPath(customerId, params.adGroupId),
+        negative: true,
+        keyword: { text: params.text, matchType },
+      },
+    }]);
+    return {
+      status: "created",
+      resource_name: results[0]?.resourceName ?? "",
+      keyword: params.text,
+      match_type: matchType,
+      level: "ad_group",
+    };
+  }
+
+  if (!params.campaignId) throw new Error("Informe campaignId ou adGroupId para a negativa.");
+
+  const results = await mutate(customerId, "campaignCriteria", [{
+    create: {
+      campaign: campaignPath(customerId, params.campaignId),
+      negative: true,
+      keyword: { text: params.text, matchType },
+    },
+  }]);
+  return {
+    status: "created",
+    resource_name: results[0]?.resourceName ?? "",
+    keyword: params.text,
+    match_type: matchType,
+    level: "campaign",
+  };
+}
+
+// ── Update ───────────────────────────────────────────────────────────────
+
+export async function updateGoogleAdsCampaign(
+  customerId: string,
+  params: { campaignId: string; status?: string; name?: string; dailyBudgetCentavos?: number | string }
+): Promise<GMutationResult> {
+  // REMOVED não é um valor aceito em update+status (INVALID_ENUM_VALUE confirmado
+  // ao vivo) — remover é uma operação "remove" separada, igual delete_*.
+  if (params.status?.toUpperCase() === "REMOVED") {
+    const resourceName = campaignPath(customerId, params.campaignId);
+    const results = await mutate(customerId, "campaigns", [{ remove: resourceName }]);
+    return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
+  }
+
+  const fieldsUpdated: string[] = [];
+  let resourceName = "";
+
+  if (params.status != null || params.name != null) {
+    const update: Record<string, unknown> = { resourceName: campaignPath(customerId, params.campaignId) };
+    const mask: string[] = [];
+    if (params.status) { update.status = params.status.toUpperCase(); mask.push("status"); }
+    if (params.name) { update.name = params.name; mask.push("name"); }
+
+    const results = await mutate(customerId, "campaigns", [{ update, updateMask: mask.join(",") }]);
+    resourceName = results[0]?.resourceName ?? "";
+    fieldsUpdated.push(...mask);
+  }
+
+  if (params.dailyBudgetCentavos != null) {
+    const rows = await gaqlSearch<{ campaign: { campaignBudget: string } }>(
+      customerId,
+      `SELECT campaign.campaign_budget FROM campaign WHERE campaign.id = ${params.campaignId}`
+    );
+    const budgetResource = rows[0]?.campaign?.campaignBudget;
+    if (!budgetResource) throw new Error(`Orçamento não encontrado para a campanha ${params.campaignId}.`);
+
+    await mutate(customerId, "campaignBudgets", [{
+      update: { resourceName: budgetResource, amountMicros: centavosToMicrosStr(params.dailyBudgetCentavos) },
+      updateMask: "amountMicros",
+    }]);
+    fieldsUpdated.push("budget_amount_micros");
+    if (!resourceName) resourceName = campaignPath(customerId, params.campaignId);
+  }
+
+  if (fieldsUpdated.length === 0) {
+    throw new Error("Nenhum campo para atualizar. Informe status, name ou dailyBudgetCentavos.");
+  }
+
+  return { status: "updated", resource_name: resourceName, fields_updated: fieldsUpdated };
+}
+
+export async function updateGoogleAdsAdGroup(
+  customerId: string,
+  params: { adGroupId: string; status?: string; name?: string; cpcBidReais?: number | string }
+): Promise<GMutationResult> {
+  if (params.status?.toUpperCase() === "REMOVED") {
+    const resourceName = adGroupPath(customerId, params.adGroupId);
+    const results = await mutate(customerId, "adGroups", [{ remove: resourceName }]);
+    return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
+  }
+
+  const update: Record<string, unknown> = { resourceName: adGroupPath(customerId, params.adGroupId) };
+  const mask: string[] = [];
+  if (params.status) { update.status = params.status.toUpperCase(); mask.push("status"); }
+  if (params.name) { update.name = params.name; mask.push("name"); }
+  if (params.cpcBidReais != null) { update.cpcBidMicros = toMicrosStr(params.cpcBidReais); mask.push("cpcBidMicros"); }
+
+  if (mask.length === 0) throw new Error("Nenhum campo para atualizar. Informe status, name ou cpcBidReais.");
+
+  const results = await mutate(customerId, "adGroups", [{ update, updateMask: mask.join(",") }]);
+  return { status: "updated", resource_name: results[0]?.resourceName ?? "", fields_updated: mask };
+}
+
+export async function updateGoogleAdsKeyword(
+  customerId: string,
+  params: { adGroupId: string; criterionId: string; status?: string; bidReais?: number | string }
+): Promise<GMutationResult> {
+  if (params.status?.toUpperCase() === "REMOVED") {
+    const resourceName = adGroupCriterionPath(customerId, params.adGroupId, params.criterionId);
+    const results = await mutate(customerId, "adGroupCriteria", [{ remove: resourceName }]);
+    return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
+  }
+
+  const update: Record<string, unknown> = {
+    resourceName: adGroupCriterionPath(customerId, params.adGroupId, params.criterionId),
+  };
+  const mask: string[] = [];
+  if (params.status) { update.status = params.status.toUpperCase(); mask.push("status"); }
+  if (params.bidReais != null) { update.cpcBidMicros = toMicrosStr(params.bidReais); mask.push("cpcBidMicros"); }
+
+  if (mask.length === 0) throw new Error("Nenhum campo para atualizar. Informe status ou bidReais.");
+
+  const results = await mutate(customerId, "adGroupCriteria", [{ update, updateMask: mask.join(",") }]);
+  return { status: "updated", resource_name: results[0]?.resourceName ?? "", fields_updated: mask };
+}
+
+export async function updateGoogleAdsAd(
+  customerId: string,
+  params: { adGroupId: string; adId: string; status?: string }
+): Promise<GMutationResult> {
+  if (!params.status) throw new Error("Informe status (ENABLED, PAUSED ou REMOVED).");
+
+  if (params.status.toUpperCase() === "REMOVED") {
+    const resourceName = adGroupAdPath(customerId, params.adGroupId, params.adId);
+    const results = await mutate(customerId, "adGroupAds", [{ remove: resourceName }]);
+    return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
+  }
+
+  const results = await mutate(customerId, "adGroupAds", [{
+    update: {
+      resourceName: adGroupAdPath(customerId, params.adGroupId, params.adId),
+      status: params.status.toUpperCase(),
+    },
+    updateMask: "status",
+  }]);
+  return { status: "updated", resource_name: results[0]?.resourceName ?? "", fields_updated: ["status"] };
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────
+
+export async function deleteGoogleAdsKeyword(
+  customerId: string,
+  params: { adGroupId: string; criterionId: string }
+): Promise<GMutationResult> {
+  const resourceName = adGroupCriterionPath(customerId, params.adGroupId, params.criterionId);
+  const results = await mutate(customerId, "adGroupCriteria", [{ remove: resourceName }]);
+  return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
+}
+
+export async function deleteGoogleAdsNegative(
+  customerId: string,
+  params: { level: "campaign" | "ad_group"; parentId: string; criterionId: string }
+): Promise<GMutationResult> {
+  if (params.level === "ad_group") {
+    const resourceName = adGroupCriterionPath(customerId, params.parentId, params.criterionId);
+    const results = await mutate(customerId, "adGroupCriteria", [{ remove: resourceName }]);
+    return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName, level: "ad_group" };
+  }
+
+  const resourceName = campaignCriterionPath(customerId, params.parentId, params.criterionId);
+  const results = await mutate(customerId, "campaignCriteria", [{ remove: resourceName }]);
+  return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName, level: "campaign" };
+}
+
+export async function deleteGoogleAdsAd(
+  customerId: string,
+  params: { adGroupId: string; adId: string }
+): Promise<GMutationResult> {
+  const resourceName = adGroupAdPath(customerId, params.adGroupId, params.adId);
+  const results = await mutate(customerId, "adGroupAds", [{ remove: resourceName }]);
+  return { status: "removed", resource_name: results[0]?.resourceName ?? resourceName };
 }

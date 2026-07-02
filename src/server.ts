@@ -49,6 +49,7 @@ import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
 import { registerWriteTools } from "./server-tools/write-tools.js";
+import { registerGoogleWriteTools } from "./server-tools/google-write-tools.js";
 import { resolveNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
@@ -2254,6 +2255,10 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         return json(await getGoogleAdsSearchTerms(cid, since, until, datePresetFrom(args)));
       }
     );
+
+    // Camada de escrita do Google Ads (criação/edição/exclusão) — Search apenas,
+    // mesma trava de confirmação usada no Meta.
+    registerGoogleWriteTools(server);
   }
 
   // Camada de inteligência (diagnóstico + auditoria) — registrada à parte.
