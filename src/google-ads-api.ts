@@ -1078,6 +1078,10 @@ export async function createGoogleAdsCampaign(
       name: `Budget-${params.name}-${Date.now()}`,
       amountMicros: centavosToMicrosStr(params.dailyBudgetCentavos),
       deliveryMethod: "STANDARD",
+      // explicitlyShared tem default TRUE se omitido (orçamento compartilhado).
+      // Cada campanha criada aqui ganha seu próprio orçamento exclusivo, então
+      // false = "Orçamento individual de campanha" na UI (não compartilhado).
+      explicitlyShared: false,
     },
   }]);
   const budgetResource = budgetResults[0]?.resourceName;
