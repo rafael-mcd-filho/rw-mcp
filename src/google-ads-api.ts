@@ -1510,14 +1510,41 @@ export async function createGoogleAdsCallout(
 export interface GAssetSummary {
   resource_name: string;
   id: string;
-  texto: string;
+  texto?: string;
+  nome?: string;
+  largura_px?: number;
+  altura_px?: number;
 }
 
-/** Lista sitelinks ou callouts já existentes na conta (biblioteca de assets), pra reaproveitar em vez de criar de novo. */
+/** Lista sitelinks, callouts ou imagens já existentes na conta (biblioteca de assets), pra reaproveitar em vez de criar/subir de novo. */
 export async function listGoogleAdsAssets(
   customerId: string,
-  type: "SITELINK" | "CALLOUT"
+  type: "SITELINK" | "CALLOUT" | "IMAGE"
 ): Promise<GAssetSummary[]> {
+  if (type === "IMAGE") {
+    const rows = await gaqlSearch<{
+      asset: {
+        resourceName: string;
+        id: string;
+        name?: string;
+        imageAsset?: { fullSize?: { widthPixels?: string; heightPixels?: string } };
+      };
+    }>(customerId, `
+      SELECT asset.resource_name, asset.id, asset.name,
+        asset.image_asset.full_size.width_pixels, asset.image_asset.full_size.height_pixels
+      FROM asset
+      WHERE asset.type = 'IMAGE'
+    `);
+
+    return rows.map((r) => ({
+      resource_name: r.asset?.resourceName ?? "",
+      id: r.asset?.id ?? "",
+      nome: r.asset?.name ?? "",
+      largura_px: safeInt(r.asset?.imageAsset?.fullSize?.widthPixels),
+      altura_px: safeInt(r.asset?.imageAsset?.fullSize?.heightPixels),
+    }));
+  }
+
   const field = type === "SITELINK" ? "asset.sitelink_asset.link_text" : "asset.callout_asset.callout_text";
   const rows = await gaqlSearch<{
     asset: { resourceName: string; id: string; sitelinkAsset?: { linkText?: string }; calloutAsset?: { calloutText?: string } };
@@ -1534,10 +1561,10 @@ export async function listGoogleAdsAssets(
   }));
 }
 
-/** Vincula um asset (sitelink/callout) já existente a uma campanha, sem criar um novo. */
+/** Vincula um asset (sitelink/callout/imagem/logo) já existente a uma campanha, sem criar um novo. */
 export async function attachGoogleAdsAsset(
   customerId: string,
-  params: { campaignId: string; assetResourceName: string; fieldType: "SITELINK" | "CALLOUT" }
+  params: { campaignId: string; assetResourceName: string; fieldType: "SITELINK" | "CALLOUT" | "AD_IMAGE" | "BUSINESS_LOGO" }
 ): Promise<GMutationResult> {
   const results = await mutate(customerId, "campaignAssets", [{
     create: {

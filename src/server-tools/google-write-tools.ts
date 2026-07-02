@@ -250,10 +250,10 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "list_google_ads_assets",
-    "Lista sitelinks ou callouts já existentes na biblioteca da conta (reutilizáveis entre campanhas), pra usar com attach_google_ads_asset em vez de criar um novo com create_google_ads_sitelink/create_google_ads_callout.",
+    "Lista sitelinks, callouts ou imagens já existentes na biblioteca da conta (reutilizáveis entre campanhas), pra usar com attach_google_ads_asset em vez de criar/subir um novo. Não existe upload de imagem nova por essa tool — só reaproveitar o que já está na conta.",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
-      type: z.enum(["SITELINK", "CALLOUT"]).describe("Tipo de asset a listar."),
+      type: z.enum(["SITELINK", "CALLOUT", "IMAGE"]).describe("Tipo de asset a listar."),
     },
     async (args) => {
       try {
@@ -267,12 +267,12 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "attach_google_ads_asset",
-    "Vincula um sitelink ou callout já existente (de list_google_ads_assets) a uma campanha, sem criar um recurso novo.",
+    "Vincula um sitelink, callout, imagem ou logo já existente (de list_google_ads_assets) a uma campanha, sem criar/subir um recurso novo. Pra imagem use field_type=AD_IMAGE (extensão de imagem do anúncio) ou BUSINESS_LOGO (logo do negócio).",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
       campaign_id: z.string().describe("ID da campanha."),
       asset_resource_name: z.string().describe("resource_name do asset (ex: 'customers/123/assets/456'), de list_google_ads_assets."),
-      field_type: z.enum(["SITELINK", "CALLOUT"]).describe("Tipo do asset sendo vinculado."),
+      field_type: z.enum(["SITELINK", "CALLOUT", "AD_IMAGE", "BUSINESS_LOGO"]).describe("Tipo do asset sendo vinculado."),
     },
     async (args) => {
       try {
