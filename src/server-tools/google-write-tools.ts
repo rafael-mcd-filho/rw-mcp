@@ -92,7 +92,7 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "create_google_ads_campaign",
-    "Cria uma campanha Search do Google Ads (sempre PAUSED — sem custo até ativar). Só Search por enquanto. Bidding (mutuamente exclusivos, nessa ordem de prioridade): maximize_conversion_value=true = Maximizar Valor da Conversão (target_roas opcional como teto 'soft'); só target_roas (sem maximize_conversion_value) = Target ROAS estrito; target_impression_share_location = Parcela de Impressões Desejada; maximize_conversions=true = Maximizar Conversões (target_cpa_reais opcional como teto 'soft'); só target_cpa_reais = Target CPA estrito; manual_cpc=true = CPC Manual; PADRÃO quando nada é informado = Maximizar Cliques (Target Spend, aceita cpc_bid_ceiling_reais opcional) — é o padrão mais seguro porque não exige lance manual configurado em ad group/keyword pra a campanha conseguir gastar. AVISO: target_roas/maximize_conversion_value/target_impression_share não foram validados contra uma campanha real (nenhuma conta testada usa essas estratégias hoje) — confira o resultado na interface do Google Ads antes de ativar. Depois de criada, use add_google_ads_location_target, add_google_ads_language_target e add_google_ads_ad_schedule para segmentar geografia, idioma e horário.",
+    "Cria uma campanha Search do Google Ads (sempre PAUSED — sem custo até ativar). Só Search por enquanto. Bidding (mutuamente exclusivos, nessa ordem de prioridade): maximize_conversion_value=true = Maximizar Valor da Conversão (target_roas opcional como teto 'soft'); só target_roas (sem maximize_conversion_value) = Target ROAS estrito; target_impression_share_location = Parcela de Impressões Desejada; maximize_conversions=true = Maximizar Conversões (target_cpa_reais opcional como teto 'soft'); só target_cpa_reais = Target CPA estrito; manual_cpc=true = CPC Manual; PADRÃO quando nada é informado = Maximizar Cliques (Target Spend, aceita cpc_bid_ceiling_reais opcional) — é o padrão mais seguro porque não exige lance manual configurado em ad group/keyword pra a campanha conseguir gastar. AVISO: target_roas/maximize_conversion_value/target_impression_share não foram validados contra uma campanha real (nenhuma conta testada usa essas estratégias hoje) — confira o resultado na interface do Google Ads antes de ativar. Depois de criada, use add_google_ads_location_target, add_google_ads_language_target e add_google_ads_ad_schedule para segmentar geografia, idioma e horário. IMPORTANTE: sempre que usar maximize_conversions, maximize_conversion_value ou target_cpa_reais/target_roas, chame list_google_ads_campaign_conversion_goals depois de criar a campanha e PERGUNTE ao usuário quais metas de conversão (categoria) ele quer que contem pro bidding antes de considerar a campanha pronta — não assuma os defaults da conta em silêncio.",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
       name: z.string().describe("Nome da campanha."),
@@ -452,15 +452,23 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "create_google_ads_rsa",
-    "Cria um Responsive Search Ad (RSA) num ad group (sempre PAUSED). Até 15 headlines e 4 descriptions.",
+    "Cria um Responsive Search Ad (RSA) num ad group (sempre PAUSED). Limites oficiais: 3 a 15 headlines (30 caracteres cada), 2 a 4 descriptions (90 caracteres cada), path1/path2 até 15 caracteres cada. Cada headline/description pode ser uma string simples (não fixada, o Google testa e escolhe a melhor posição) ou um objeto {text, pin} pra fixar numa posição específica — pin '1'/'2'/'3' pra headline, só '1'/'2' pra description. Fixar restringe esse texto a SÓ aparecer naquela posição.",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
       ad_group_id: z.string().describe("ID do ad group."),
-      headlines: z.array(z.string()).min(1).max(15).describe("Headlines do anúncio (1 a 15)."),
-      descriptions: z.array(z.string()).min(1).max(4).describe("Descriptions do anúncio (1 a 4)."),
+      headlines: z
+        .array(z.union([z.string(), z.object({ text: z.string(), pin: z.enum(["1", "2", "3"]).optional() })]))
+        .min(3)
+        .max(15)
+        .describe("Headlines do anúncio (3 a 15, 30 caracteres cada). String simples ou {text, pin} pra fixar posição."),
+      descriptions: z
+        .array(z.union([z.string(), z.object({ text: z.string(), pin: z.enum(["1", "2"]).optional() })]))
+        .min(2)
+        .max(4)
+        .describe("Descriptions do anúncio (2 a 4, 90 caracteres cada). String simples ou {text, pin} pra fixar posição."),
       final_url: z.string().describe("URL de destino do anúncio."),
-      path1: z.string().optional().describe("Caminho de exibição 1 (opcional)."),
-      path2: z.string().optional().describe("Caminho de exibição 2 (opcional)."),
+      path1: z.string().max(15).optional().describe("Caminho de exibição 1 (opcional, até 15 caracteres)."),
+      path2: z.string().max(15).optional().describe("Caminho de exibição 2 (opcional, até 15 caracteres)."),
     },
     async (args) => {
       try {
@@ -483,14 +491,14 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "create_google_ads_sitelink",
-    "Cria uma extensão de sitelink e vincula a uma campanha.",
+    "Cria uma extensão de sitelink e vincula a uma campanha. Limites oficiais: texto até 25 caracteres; desc1/desc2 até 35 caracteres cada — se usar uma, precisa usar as duas juntas.",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
       campaign_id: z.string().describe("ID da campanha."),
-      text: z.string().describe("Texto do sitelink."),
+      text: z.string().max(25).describe("Texto do sitelink (até 25 caracteres)."),
       url: z.string().describe("URL do sitelink."),
-      desc1: z.string().optional().describe("Linha de descrição 1."),
-      desc2: z.string().optional().describe("Linha de descrição 2."),
+      desc1: z.string().max(35).optional().describe("Linha de descrição 1 (até 35 caracteres). Se usar, desc2 também é obrigatório."),
+      desc2: z.string().max(35).optional().describe("Linha de descrição 2 (até 35 caracteres). Se usar, desc1 também é obrigatório."),
     },
     async (args) => {
       try {
@@ -512,11 +520,11 @@ export function registerGoogleWriteTools(server: McpServer): void {
 
   server.tool(
     "create_google_ads_callout",
-    "Cria uma extensão de callout e vincula a uma campanha.",
+    "Cria uma extensão de callout e vincula a uma campanha. Limite oficial: texto até 25 caracteres.",
     {
       ...GOOGLE_CUSTOMER_SCHEMA,
       campaign_id: z.string().describe("ID da campanha."),
-      text: z.string().describe("Texto do callout."),
+      text: z.string().max(25).describe("Texto do callout (até 25 caracteres)."),
     },
     async (args) => {
       try {

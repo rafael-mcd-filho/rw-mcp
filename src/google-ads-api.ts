@@ -1096,6 +1096,11 @@ export async function createGoogleAdsCampaign(
     networkSettings: {
       targetGoogleSearch: true,
       targetSearchNetwork: params.targetSearchPartners ?? true,
+      // Sem isso, a API deixa a Rede de Display ligada por padrão numa campanha
+      // Search (confirmado: campanha real via UI veio com "Incluir a Rede de
+      // Display do Google" marcado sem eu ter pedido). Campanhas Search dessa
+      // tool nunca devem incluir Display.
+      targetContentNetwork: false,
     },
   };
 
@@ -1344,22 +1349,57 @@ export async function addGoogleAdsKeyword(
   };
 }
 
+export type GAdTextAsset = string | { text: string; pin?: "1" | "2" | "3" };
+
+const HEADLINE_MAX_LEN = 30;
+const DESCRIPTION_MAX_LEN = 90;
+const PATH_MAX_LEN = 15;
+
+function normalizeAdTextAssets(
+  items: GAdTextAsset[],
+  kind: "headline" | "description",
+  maxLen: number,
+  pinPrefix: "HEADLINE_" | "DESCRIPTION_"
+): { text: string; pinnedField?: string }[] {
+  return items
+    .map((item) => (typeof item === "string" ? { text: item, pin: undefined } : item))
+    .filter((item) => item.text.trim())
+    .map((item) => {
+      if (item.text.length > maxLen) {
+        throw new Error(`${kind} "${item.text}" tem ${item.text.length} caracteres, máximo é ${maxLen}.`);
+      }
+      const out: { text: string; pinnedField?: string } = { text: item.text };
+      if (item.pin) out.pinnedField = `${pinPrefix}${item.pin}`;
+      return out;
+    });
+}
+
 export async function createGoogleAdsRsa(
   customerId: string,
   params: {
     adGroupId: string;
-    headlines: string[];
-    descriptions: string[];
+    headlines: GAdTextAsset[];
+    descriptions: GAdTextAsset[];
     finalUrl: string;
     path1?: string;
     path2?: string;
   }
 ): Promise<GMutationResult> {
-  const headlines = params.headlines.filter((h) => h.trim()).slice(0, 15).map((text) => ({ text }));
-  const descriptions = params.descriptions.filter((d) => d.trim()).slice(0, 4).map((text) => ({ text }));
+  const headlines = normalizeAdTextAssets(params.headlines, "headline", HEADLINE_MAX_LEN, "HEADLINE_").slice(0, 15);
+  const descriptions = normalizeAdTextAssets(params.descriptions, "description", DESCRIPTION_MAX_LEN, "DESCRIPTION_").slice(0, 4);
 
-  if (headlines.length === 0) throw new Error("Informe ao menos 1 headline.");
-  if (descriptions.length === 0) throw new Error("Informe ao menos 1 description.");
+  // Limites oficiais do RSA (support.google.com/google-ads/answer/7684791):
+  // 3–15 headlines (30 caracteres cada), 2–4 descriptions (90 caracteres cada),
+  // path1/path2 até 15 caracteres cada. Pinning só aceita posição 1/2/3 em
+  // headline e 1/2 em description (ServedAssetFieldTypeEnum).
+  if (headlines.length < 3) throw new Error(`RSA exige no mínimo 3 headlines (recebido: ${headlines.length}).`);
+  if (descriptions.length < 2) throw new Error(`RSA exige no mínimo 2 descriptions (recebido: ${descriptions.length}).`);
+  if (params.path1 && params.path1.length > PATH_MAX_LEN) {
+    throw new Error(`path1 "${params.path1}" tem ${params.path1.length} caracteres, máximo é ${PATH_MAX_LEN}.`);
+  }
+  if (params.path2 && params.path2.length > PATH_MAX_LEN) {
+    throw new Error(`path2 "${params.path2}" tem ${params.path2.length} caracteres, máximo é ${PATH_MAX_LEN}.`);
+  }
 
   const responsiveSearchAd: Record<string, unknown> = { headlines, descriptions };
   if (params.path1) responsiveSearchAd.path1 = params.path1;
@@ -1382,17 +1422,37 @@ export async function createGoogleAdsRsa(
   };
 }
 
+const SITELINK_TEXT_MAX_LEN = 25;
+const SITELINK_DESC_MAX_LEN = 35;
+
 export async function createGoogleAdsSitelink(
   customerId: string,
   params: { campaignId: string; text: string; url: string; desc1?: string; desc2?: string }
 ): Promise<GMutationResult> {
+  // Limites oficiais (SitelinkAsset): link_text 1–25 caracteres; description1/2,
+  // se usadas, 1–35 caracteres CADA e as duas precisam vir juntas (não dá pra
+  // mandar só uma) — por isso não default pra "" quando só uma for informada.
+  if (params.text.length > SITELINK_TEXT_MAX_LEN) {
+    throw new Error(`Texto do sitelink "${params.text}" tem ${params.text.length} caracteres, máximo é ${SITELINK_TEXT_MAX_LEN}.`);
+  }
+  if ((params.desc1 && !params.desc2) || (!params.desc1 && params.desc2)) {
+    throw new Error("Se informar desc1 ou desc2, as duas são obrigatórias juntas.");
+  }
+  for (const [label, desc] of [["desc1", params.desc1], ["desc2", params.desc2]] as const) {
+    if (desc && desc.length > SITELINK_DESC_MAX_LEN) {
+      throw new Error(`${label} "${desc}" tem ${desc.length} caracteres, máximo é ${SITELINK_DESC_MAX_LEN}.`);
+    }
+  }
+
+  const sitelinkAsset: Record<string, unknown> = { linkText: params.text };
+  if (params.desc1 && params.desc2) {
+    sitelinkAsset.description1 = params.desc1;
+    sitelinkAsset.description2 = params.desc2;
+  }
+
   const assetResults = await mutate(customerId, "assets", [{
     create: {
-      sitelinkAsset: {
-        linkText: params.text,
-        description1: params.desc1 ?? "",
-        description2: params.desc2 ?? "",
-      },
+      sitelinkAsset,
       finalUrls: [params.url],
     },
   }]);
@@ -1415,10 +1475,16 @@ export async function createGoogleAdsSitelink(
   };
 }
 
+const CALLOUT_TEXT_MAX_LEN = 25;
+
 export async function createGoogleAdsCallout(
   customerId: string,
   params: { campaignId: string; text: string }
 ): Promise<GMutationResult> {
+  if (params.text.length > CALLOUT_TEXT_MAX_LEN) {
+    throw new Error(`Texto do callout "${params.text}" tem ${params.text.length} caracteres, máximo é ${CALLOUT_TEXT_MAX_LEN}.`);
+  }
+
   const assetResults = await mutate(customerId, "assets", [{
     create: { calloutAsset: { calloutText: params.text } },
   }]);
