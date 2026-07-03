@@ -220,6 +220,12 @@ export interface GCampaign {
   parcela_impressoes: string;
   is_perdida_orcamento?: number | null; // % de IS perdida por orçamento (Search)
   is_perdida_rank?: number | null; // % de IS perdida por rank/qualidade (Search)
+  rede_pesquisa_google?: boolean;
+  rede_parceiros_pesquisa?: boolean;
+  rede_display?: boolean;
+  rede_parceiros_busca_somente?: boolean;
+  segmentacao_geo_positiva?: string;
+  segmentacao_geo_negativa?: string;
 }
 
 export interface GAccountReport {
@@ -309,7 +315,19 @@ export async function getGoogleAdsCampaigns(
   const where = dateClause(since, until, preset);
 
   const rows = await gaqlSearch<{
-    campaign: { id: string; name: string; status: string; advertisingChannelType: string };
+    campaign: {
+      id: string; name: string; status: string; advertisingChannelType: string;
+      networkSettings?: {
+        targetGoogleSearch?: boolean;
+        targetSearchNetwork?: boolean;
+        targetContentNetwork?: boolean;
+        targetPartnerSearchNetwork?: boolean;
+      };
+      geoTargetTypeSetting?: {
+        positiveGeoTargetType?: string;
+        negativeGeoTargetType?: string;
+      };
+    };
     metrics: {
       costMicros: string;
       impressions: string;
@@ -328,6 +346,12 @@ export async function getGoogleAdsCampaigns(
       campaign.name,
       campaign.status,
       campaign.advertising_channel_type,
+      campaign.network_settings.target_google_search,
+      campaign.network_settings.target_search_network,
+      campaign.network_settings.target_content_network,
+      campaign.network_settings.target_partner_search_network,
+      campaign.geo_target_type_setting.positive_geo_target_type,
+      campaign.geo_target_type_setting.negative_geo_target_type,
       metrics.cost_micros,
       metrics.impressions,
       metrics.clicks,
@@ -369,6 +393,12 @@ export async function getGoogleAdsCampaigns(
       parcela_impressoes: sisLabel,
       is_perdida_orcamento: pctOrNull(r.metrics?.searchBudgetLostImpressionShare),
       is_perdida_rank: pctOrNull(r.metrics?.searchRankLostImpressionShare),
+      rede_pesquisa_google: r.campaign?.networkSettings?.targetGoogleSearch ?? false,
+      rede_parceiros_pesquisa: r.campaign?.networkSettings?.targetSearchNetwork ?? false,
+      rede_display: r.campaign?.networkSettings?.targetContentNetwork ?? false,
+      rede_parceiros_busca_somente: r.campaign?.networkSettings?.targetPartnerSearchNetwork ?? false,
+      segmentacao_geo_positiva: r.campaign?.geoTargetTypeSetting?.positiveGeoTargetType ?? "",
+      segmentacao_geo_negativa: r.campaign?.geoTargetTypeSetting?.negativeGeoTargetType ?? "",
     };
   });
 }
