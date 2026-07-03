@@ -24,6 +24,7 @@ import {
   getGoogleAdsDemographics,
   getGoogleAdsAdCopy,
   getGoogleAdsAdAssetPerformance,
+  getGoogleAdsLocationTargets,
 } from "./google-ads-api.js";
 import {
   buildGoogleAdsReport,
@@ -2201,6 +2202,22 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         const { since, until } = periodFrom(args);
         const cid = requireValue(gadsCustomerId(args), "customer_id");
         return json(await getGoogleAdsAdGroups(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_location_targets",
+      "Lê a segmentação geográfica configurada numa campanha Google Ads hoje (cidades/regiões/países incluídos ou excluídos). Complementa add_google_ads_location_target, que só escreve — esta lê o que já está configurado. Use para auditar se uma campanha está restrita à região certa antes de investigar leads fora da área de atuação.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        campaign_id: z.union([z.string(), z.number()]).describe("ID da campanha."),
+        campaignId: z.union([z.string(), z.number()]).optional().describe("Alias de campaign_id."),
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const campaignId = (args as { campaign_id?: unknown; campaignId?: unknown }).campaign_id ?? (args as { campaignId?: unknown }).campaignId;
+        return json(await getGoogleAdsLocationTargets(cid, requireValue(campaignId != null ? String(campaignId) : undefined, "campaign_id")));
       }
     );
 

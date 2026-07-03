@@ -238,6 +238,8 @@ export interface GAccountReport {
 }
 
 export interface GKeyword {
+  id: string;
+  ad_group_id: string;
   keyword: string;
   correspondencia: string;
   grupo: string;
@@ -419,10 +421,11 @@ export async function getGoogleAdsKeywords(
 
   const rows = await gaqlSearch<{
     adGroupCriterion: {
+      criterionId: string;
       keyword: { text: string; matchType: string };
       qualityInfo?: { qualityScore?: number };
     };
-    adGroup: { name: string };
+    adGroup: { id: string; name: string };
     campaign: { name: string };
     metrics: {
       costMicros: string;
@@ -435,9 +438,11 @@ export async function getGoogleAdsKeywords(
     };
   }>(customerId, `
     SELECT
+      ad_group_criterion.criterion_id,
       ad_group_criterion.keyword.text,
       ad_group_criterion.keyword.match_type,
       ad_group_criterion.quality_info.quality_score,
+      ad_group.id,
       ad_group.name,
       campaign.name,
       metrics.cost_micros,
@@ -457,6 +462,8 @@ export async function getGoogleAdsKeywords(
   `);
 
   return rows.map(r => ({
+    id: r.adGroupCriterion?.criterionId ?? "",
+    ad_group_id: r.adGroup?.id ?? "",
     keyword: r.adGroupCriterion?.keyword?.text ?? "",
     correspondencia: r.adGroupCriterion?.keyword?.matchType ?? "",
     grupo: r.adGroup?.name ?? "",
@@ -1351,6 +1358,83 @@ export async function searchGoogleAdsGeoTargets(
     pais: s.geoTargetConstant?.countryCode ?? "",
     tipo: s.geoTargetConstant?.targetType ?? "",
   }));
+}
+
+export interface GLocationTarget {
+  criterion_id: string;
+  geo_target_constant_id: string;
+  nome: string;
+  nome_canonico: string;
+  pais: string;
+  tipo: string;
+  negativo: boolean;
+  status: string;
+}
+
+/** Lê a segmentação geográfica atual de uma campanha (o que add_google_ads_location_target escreve). */
+export async function getGoogleAdsLocationTargets(
+  customerId: string,
+  campaignId: string
+): Promise<GLocationTarget[]> {
+  const rows = await gaqlSearch<{
+    campaignCriterion: {
+      criterionId: string;
+      negative?: boolean;
+      status: string;
+      location?: { geoTargetConstant?: string };
+    };
+  }>(customerId, `
+    SELECT
+      campaign_criterion.criterion_id,
+      campaign_criterion.negative,
+      campaign_criterion.status,
+      campaign_criterion.location.geo_target_constant
+    FROM campaign_criterion
+    WHERE campaign.id = ${campaignId}
+      AND campaign_criterion.type = 'LOCATION'
+      AND campaign_criterion.status != 'REMOVED'
+  `);
+
+  const geoIds = Array.from(new Set(
+    rows
+      .map(r => r.campaignCriterion?.location?.geoTargetConstant?.split("/")[1])
+      .filter((id): id is string => !!id)
+  ));
+
+  const infoById = new Map<string, { name: string; canonicalName: string; countryCode: string; targetType: string }>();
+  if (geoIds.length > 0) {
+    const nameRows = await gaqlSearch<{
+      geoTargetConstant: { id: string; name: string; canonicalName: string; countryCode: string; targetType: string };
+    }>(customerId, `
+      SELECT
+        geo_target_constant.id,
+        geo_target_constant.name,
+        geo_target_constant.canonical_name,
+        geo_target_constant.country_code,
+        geo_target_constant.target_type
+      FROM geo_target_constant
+      WHERE geo_target_constant.id IN (${geoIds.join(",")})
+    `);
+    for (const r of nameRows) {
+      const g = r.geoTargetConstant;
+      if (g?.id) infoById.set(String(g.id), g);
+    }
+  }
+
+  return rows.map(r => {
+    const geoId = r.campaignCriterion?.location?.geoTargetConstant?.split("/")[1] ?? "";
+    const info = infoById.get(geoId);
+    return {
+      criterion_id: r.campaignCriterion?.criterionId ?? "",
+      geo_target_constant_id: geoId,
+      nome: info?.name ?? "",
+      nome_canonico: info?.canonicalName ?? "",
+      pais: info?.countryCode ?? "",
+      tipo: info?.targetType ?? "",
+      negativo: !!r.campaignCriterion?.negative,
+      status: r.campaignCriterion?.status ?? "",
+    };
+  });
 }
 
 export async function addGoogleAdsLocationTargets(
