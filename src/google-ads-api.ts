@@ -672,6 +672,144 @@ export async function getGoogleAdsAds(
   }));
 }
 
+// ─── Conteúdo do anúncio (headlines/descriptions do RSA) ───────────────────
+
+export interface GAdCopyAsset {
+  texto: string;
+  fixado: string | null; // ex: "HEADLINE_1" quando o título/descrição está pinado numa posição
+}
+
+export interface GAdCopy {
+  ad_id: string;
+  campanha: string;
+  grupo: string;
+  status: string;
+  headlines: GAdCopyAsset[];
+  descriptions: GAdCopyAsset[];
+  final_urls: string[];
+  path1: string | null;
+  path2: string | null;
+}
+
+export async function getGoogleAdsAdCopy(
+  customerId: string,
+  campaignId?: string,
+  adGroupId?: string
+): Promise<GAdCopy[]> {
+  const filters = ["ad_group_ad.status != 'REMOVED'"];
+  if (campaignId) filters.push(`campaign.id = ${campaignId}`);
+  if (adGroupId) filters.push(`ad_group.id = ${adGroupId}`);
+
+  const rows = await gaqlSearch<{
+    campaign: { name: string };
+    adGroup: { name: string };
+    adGroupAd: {
+      status: string;
+      ad: {
+        id: string;
+        finalUrls?: string[];
+        responsiveSearchAd?: {
+          headlines?: Array<{ text: string; pinnedField?: string }>;
+          descriptions?: Array<{ text: string; pinnedField?: string }>;
+          path1?: string;
+          path2?: string;
+        };
+      };
+    };
+  }>(customerId, `
+    SELECT
+      campaign.name,
+      ad_group.name,
+      ad_group_ad.status,
+      ad_group_ad.ad.id,
+      ad_group_ad.ad.final_urls,
+      ad_group_ad.ad.responsive_search_ad.headlines,
+      ad_group_ad.ad.responsive_search_ad.descriptions,
+      ad_group_ad.ad.responsive_search_ad.path1,
+      ad_group_ad.ad.responsive_search_ad.path2
+    FROM ad_group_ad
+    WHERE ${filters.join(" AND ")}
+  `);
+
+  return rows.map((r) => {
+    const rsa = r.adGroupAd?.ad?.responsiveSearchAd;
+    return {
+      ad_id: r.adGroupAd?.ad?.id ?? "",
+      campanha: r.campaign?.name ?? "",
+      grupo: r.adGroup?.name ?? "",
+      status: r.adGroupAd?.status ?? "",
+      headlines: (rsa?.headlines ?? []).map((h) => ({ texto: h.text, fixado: h.pinnedField ?? null })),
+      descriptions: (rsa?.descriptions ?? []).map((d) => ({ texto: d.text, fixado: d.pinnedField ?? null })),
+      final_urls: r.adGroupAd?.ad?.finalUrls ?? [],
+      path1: rsa?.path1 ?? null,
+      path2: rsa?.path2 ?? null,
+    };
+  });
+}
+
+// ─── Performance por asset individual (qual headline/description específica performa melhor) ───
+
+export interface GAdAssetPerformance {
+  tipo: "HEADLINE" | "DESCRIPTION";
+  texto: string;
+  performance_label: string;
+  campanha_id: string;
+  grupo_id: string;
+  impressoes: number;
+  cliques: number;
+  ctr: number;
+}
+
+export async function getGoogleAdsAdAssetPerformance(
+  customerId: string,
+  campaignId?: string,
+  adGroupId?: string,
+  since?: string,
+  until?: string,
+  preset?: string,
+  limit = 100
+): Promise<GAdAssetPerformance[]> {
+  const filters = [
+    dateClause(since, until, preset),
+    "ad_group_ad_asset_view.field_type IN ('HEADLINE', 'DESCRIPTION')",
+  ];
+  if (campaignId) filters.push(`campaign.id = ${campaignId}`);
+  if (adGroupId) filters.push(`ad_group.id = ${adGroupId}`);
+
+  const rows = await gaqlSearch<{
+    campaign: { id: string };
+    adGroup: { id: string };
+    asset: { textAsset?: { text: string } };
+    adGroupAdAssetView: { fieldType: string; performanceLabel: string };
+    metrics: { impressions: string; clicks: string; ctr: string };
+  }>(customerId, `
+    SELECT
+      campaign.id,
+      ad_group.id,
+      ad_group_ad_asset_view.field_type,
+      ad_group_ad_asset_view.performance_label,
+      asset.text_asset.text,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.ctr
+    FROM ad_group_ad_asset_view
+    WHERE ${filters.join(" AND ")}
+    ORDER BY metrics.impressions DESC
+    LIMIT ${limit}
+  `);
+
+  return rows.map((r) => ({
+    tipo: (r.adGroupAdAssetView?.fieldType as "HEADLINE" | "DESCRIPTION") ?? "HEADLINE",
+    texto: r.asset?.textAsset?.text ?? "",
+    performance_label: r.adGroupAdAssetView?.performanceLabel ?? "",
+    campanha_id: r.campaign?.id ?? "",
+    grupo_id: r.adGroup?.id ?? "",
+    impressoes: safeInt(r.metrics?.impressions),
+    cliques: safeInt(r.metrics?.clicks),
+    ctr: r2(safeFloat(r.metrics?.ctr) * 100),
+  }));
+}
+
 // ─── Hourly Breakdown ────────────────────────────────────────────────────────
 
 export interface GHourData {

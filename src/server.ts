@@ -22,6 +22,8 @@ import {
   getGoogleAdsSearchTerms,
   getGoogleAdsConversionActions,
   getGoogleAdsDemographics,
+  getGoogleAdsAdCopy,
+  getGoogleAdsAdAssetPerformance,
 } from "./google-ads-api.js";
 import {
   buildGoogleAdsReport,
@@ -2253,6 +2255,64 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         const { since, until } = periodFrom(args);
         const cid = requireValue(gadsCustomerId(args), "customer_id");
         return json(await getGoogleAdsSearchTerms(cid, since, until, datePresetFrom(args)));
+      }
+    );
+
+    server.tool(
+      "get_google_ads_ad_copy",
+      "Conteúdo real dos anúncios (RSA) de uma conta Google Ads: todas as headlines e descriptions cadastradas (com indicação de qual está fixada/pinada em posição específica), URL final e paths de exibição. Diferente de get_google_ads_ads (que só traz métricas) — esta tool traz o texto do anúncio em si. Filtre por campaign_id e/ou ad_group_id para não trazer a conta inteira.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        campaign_id: z.union([z.string(), z.number()]).optional().describe("Filtrar por ID da campanha."),
+        campaignId: z.union([z.string(), z.number()]).optional().describe("Alias de campaign_id."),
+        ad_group_id: z.union([z.string(), z.number()]).optional().describe("Filtrar por ID do ad group."),
+        adGroupId: z.union([z.string(), z.number()]).optional().describe("Alias de ad_group_id."),
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const campaignId = (args as { campaign_id?: unknown; campaignId?: unknown }).campaign_id ?? (args as { campaignId?: unknown }).campaignId;
+        const adGroupId = (args as { ad_group_id?: unknown; adGroupId?: unknown }).ad_group_id ?? (args as { adGroupId?: unknown }).adGroupId;
+        return json(
+          await getGoogleAdsAdCopy(
+            cid,
+            campaignId != null ? String(campaignId) : undefined,
+            adGroupId != null ? String(adGroupId) : undefined
+          )
+        );
+      }
+    );
+
+    server.tool(
+      "get_google_ads_ad_asset_performance",
+      "Performance individual de cada headline/description dentro dos anúncios RSA (via ad_group_ad_asset_view) — mostra qual título ou descrição específica teve melhor CTR/impressões/cliques, diferente das métricas agregadas do anúncio inteiro. Use pra decidir quais headlines/descriptions manter, trocar ou usar como base pra novas variações.",
+      {
+        ...GADS_CUSTOMER_SCHEMA,
+        campaign_id: z.union([z.string(), z.number()]).optional().describe("Filtrar por ID da campanha."),
+        campaignId: z.union([z.string(), z.number()]).optional().describe("Alias de campaign_id."),
+        ad_group_id: z.union([z.string(), z.number()]).optional().describe("Filtrar por ID do ad group."),
+        adGroupId: z.union([z.string(), z.number()]).optional().describe("Alias de ad_group_id."),
+        ...OPTIONAL_PERIOD_SCHEMA,
+        ...DATE_PRESET_SCHEMA,
+        limit: z.number().int().min(1).max(500).optional().describe("Máximo de linhas retornadas (1–500). Padrão: 100."),
+        ...COMMON_COMPAT_SCHEMA,
+      },
+      async (args) => {
+        const { since, until } = periodFrom(args);
+        const cid = requireValue(gadsCustomerId(args), "customer_id");
+        const campaignId = (args as { campaign_id?: unknown; campaignId?: unknown }).campaign_id ?? (args as { campaignId?: unknown }).campaignId;
+        const adGroupId = (args as { ad_group_id?: unknown; adGroupId?: unknown }).ad_group_id ?? (args as { adGroupId?: unknown }).adGroupId;
+        return json(
+          await getGoogleAdsAdAssetPerformance(
+            cid,
+            campaignId != null ? String(campaignId) : undefined,
+            adGroupId != null ? String(adGroupId) : undefined,
+            since,
+            until,
+            datePresetFrom(args),
+            (args as { limit?: number }).limit ?? 100
+          )
+        );
       }
     );
 
