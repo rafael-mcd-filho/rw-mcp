@@ -805,6 +805,13 @@ export function createMcpServer(
   );
 
   server.tool(
+    "list_saved_audiences",
+    "Lista os Públicos Salvos (Saved Audiences) da conta — pacotes de targeting (local, idade, interesses, públicos) reutilizáveis ao criar conjuntos. Diferente de list_custom_audiences (retargeting/lookalike).",
+    { ...ACCOUNT_ID_SCHEMA },
+    async (args) => json(await client.listSavedAudiences(accountIdFrom(args)))
+  );
+
+  server.tool(
     "get_custom_audience",
     "Detalhes de um público pelo ID, incluindo a `rule` (regra de segmentação). Use para inspecionar a estrutura exata de um público de regra existente (eventos de pixel ou de engajamento do Instagram) e reusar como base ao criar novos.",
     {

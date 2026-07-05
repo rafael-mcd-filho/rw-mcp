@@ -1283,6 +1283,35 @@ export class MetaAdsClient {
     });
   }
 
+  /**
+   * Público Salvo (Saved Audience): pacote reutilizável de targeting (local,
+   * idade, gênero, interesses/comportamentos, públicos personalizados,
+   * Advantage+ audience) que fica disponível na aba "Públicos" do Gerenciador
+   * e pode ser reaproveitado ao montar novos conjuntos de anúncio.
+   */
+  async createSavedAudience(p: {
+    accountId?: string;
+    name: string;
+    targeting: Record<string, unknown>;
+    description?: string;
+  }): Promise<{ id: string }> {
+    const acct = this.resolveAccount(p.accountId);
+    const body: Record<string, unknown> = {
+      name: p.name,
+      targeting: this.normalizeTargeting(p.targeting),
+    };
+    if (p.description) body["description"] = p.description;
+    return this.sendWrite<{ id: string }>(`${acct}/saved_audiences`, body);
+  }
+
+  async listSavedAudiences(accountId?: string): Promise<unknown[]> {
+    const acct = this.resolveAccount(accountId);
+    return this.requestPaged(`${acct}/saved_audiences`, {
+      fields: "id,name,description,targeting,approximate_count_lower_bound,approximate_count_upper_bound",
+      limit: "100",
+    });
+  }
+
   /** Detalhes de um criativo (útil para inspecionar/reusar configurações). */
   async getCreative(id: string, fields?: string): Promise<unknown> {
     return this.request<unknown>(id, {

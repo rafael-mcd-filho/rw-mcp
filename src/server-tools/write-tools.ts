@@ -569,6 +569,44 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     }
   );
 
+  server.tool(
+    "create_saved_audience",
+    [
+      "Cria um Público Salvo (Saved Audience): pacote reutilizável de targeting (local, idade, gênero,",
+      "direcionamento detalhado/interesses, públicos personalizados incluídos/excluídos, Advantage+ audience)",
+      "que fica disponível na aba \"Públicos\" do Gerenciador e pode ser reaproveitado ao montar novos conjuntos.",
+      "",
+      "Diferente de create_custom_audience (que cria retargeting/lookalike a partir de pixel, IG ou lista):",
+      "aqui `targeting` é o MESMO objeto usado em create_adset — geo_locations, age_min, age_max, genders,",
+      "flexible_spec (interests/behaviors), custom_audiences, excluded_custom_audiences, publisher_platforms,",
+      "e targeting_automation.advantage_audience (0=desativado/fixo, 1=ativado/deixa a Meta expandir).",
+    ].join("\n"),
+    {
+      ...ACCOUNT_SCHEMA,
+      name: z.string().describe("Nome do público salvo."),
+      targeting: z
+        .record(z.unknown())
+        .describe(
+          "Spec de targeting completo (geo_locations, age_min/max, genders, flexible_spec, custom_audiences, excluded_custom_audiences, targeting_automation.advantage_audience, etc.) — mesmo formato de create_adset."
+        ),
+      description: z.string().optional().describe("Descrição opcional."),
+    },
+    async (args) => {
+      try {
+        return json(
+          await client.createSavedAudience({
+            accountId: accountIdFrom(args),
+            name: args.name as string,
+            targeting: args.targeting as Record<string, unknown>,
+            description: args.description as string | undefined,
+          })
+        );
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
   // ─── Duplicação (cópia PAUSED — sem trava) ────────────────────────────────────
   server.tool(
     "duplicate_object",
