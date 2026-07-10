@@ -710,7 +710,11 @@ export class MetaAdsClient {
     body: Record<string, unknown>,
     method: "POST" | "DELETE" = "POST"
   ): Promise<T> {
-    const url = `${META_API_BASE}/${endpoint}`;
+    // access_token também via query string: o Graph API do Meta nem sempre lê o
+    // corpo JSON em requisições DELETE (algumas camadas de proxy/edge também
+    // descartam corpo em DELETE), e sem o token a resposta vem com um erro
+    // genérico e enganoso ("versão da API não suportada") em vez de auth error.
+    const url = `${META_API_BASE}/${endpoint}?access_token=${encodeURIComponent(this.accessToken)}`;
     const payload: Record<string, unknown> = { ...body, access_token: this.accessToken };
     let lastError: Error | null = null;
 
