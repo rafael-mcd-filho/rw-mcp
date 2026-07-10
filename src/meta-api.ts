@@ -1013,12 +1013,15 @@ export class MetaAdsClient {
   async duplicateObject(
     id: string,
     kind: "campaign" | "adset" | "ad",
-    opts?: { deepCopy?: boolean; statusOption?: string }
+    opts?: { deepCopy?: boolean; statusOption?: string; targetCampaignId?: string; targetAdsetId?: string }
   ): Promise<unknown> {
     const body: Record<string, unknown> = {
       status_option: opts?.statusOption ?? "PAUSED",
     };
     if (kind === "campaign") body["deep_copy"] = opts?.deepCopy ?? false;
+    // Move a cópia pra outra campanha/adset (endpoint /copies aceita isso nativamente).
+    if (kind === "adset" && opts?.targetCampaignId) body["campaign_id"] = opts.targetCampaignId;
+    if (kind === "ad" && opts?.targetAdsetId) body["adset_id"] = opts.targetAdsetId;
     return this.sendWrite<unknown>(`${id}/copies`, body);
   }
 

@@ -610,11 +610,13 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   // ─── Duplicação (cópia PAUSED — sem trava) ────────────────────────────────────
   server.tool(
     "duplicate_object",
-    "Duplica uma campanha, conjunto ou anúncio (cópia sempre PAUSED). Para campanha, deep_copy=true copia também conjuntos e anúncios.",
+    "Duplica uma campanha, conjunto ou anúncio (cópia sempre PAUSED). Para campanha, deep_copy=true copia também conjuntos e anúncios. Para conjunto, target_campaign_id move a cópia pra outra campanha (útil pra clonar um conjunto com configuração já validada em vez de recriar do zero). Para anúncio, target_adset_id move a cópia pra outro conjunto.",
     {
       id: z.string().describe("ID do objeto a duplicar."),
       object_type: z.enum(["campaign", "adset", "ad"]).describe("Tipo do objeto."),
       deep_copy: z.boolean().optional().describe("Só para campanha: copia conjuntos e anúncios também."),
+      target_campaign_id: z.string().optional().describe("Só para conjunto: move a cópia pra esta campanha em vez de manter na original."),
+      target_adset_id: z.string().optional().describe("Só para anúncio: move a cópia pra este conjunto em vez de manter no original."),
     },
     async (args) => {
       try {
@@ -622,7 +624,11 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
           await client.duplicateObject(
             args.id as string,
             args.object_type as "campaign" | "adset" | "ad",
-            { deepCopy: args.deep_copy as boolean | undefined }
+            {
+              deepCopy: args.deep_copy as boolean | undefined,
+              targetCampaignId: args.target_campaign_id as string | undefined,
+              targetAdsetId: args.target_adset_id as string | undefined,
+            }
           )
         );
       } catch (e) {
