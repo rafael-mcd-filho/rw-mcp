@@ -257,6 +257,14 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         .record(z.unknown())
         .optional()
         .describe("Spec do post (page_id + video_data/link_data/photo_data)."),
+      object_story_id: z
+        .string()
+        .optional()
+        .describe("Reusa um post orgânico já publicado no Facebook, formato '{page_id}_{post_id}'. Alternativa a object_story_spec quando o criativo é a partir de um post existente."),
+      source_instagram_media_id: z
+        .string()
+        .optional()
+        .describe("Reusa um post orgânico já publicado no Instagram pelo media ID (ex: o ID numérico do post). Alternativa a object_story_spec/object_story_id para posts nativos do Instagram."),
       asset_feed_spec: z
         .record(z.unknown())
         .optional()
@@ -275,6 +283,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
             accountId: accountIdFrom(args),
             name: args.name as string,
             objectStorySpec: args.object_story_spec as Record<string, unknown> | undefined,
+            objectStoryId: args.object_story_id as string | undefined,
+            sourceInstagramMediaId: args.source_instagram_media_id as string | undefined,
             assetFeedSpec: args.asset_feed_spec as Record<string, unknown> | undefined,
             instagramUserId: args.instagram_user_id as string | undefined,
             urlTags: args.url_tags as string | undefined,

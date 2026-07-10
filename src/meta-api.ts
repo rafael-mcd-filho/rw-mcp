@@ -912,6 +912,8 @@ export class MetaAdsClient {
     accountId?: string;
     name: string;
     objectStorySpec?: Record<string, unknown>;
+    objectStoryId?: string;
+    sourceInstagramMediaId?: string;
     assetFeedSpec?: Record<string, unknown>;
     instagramUserId?: string;
     urlTags?: string;
@@ -924,6 +926,12 @@ export class MetaAdsClient {
       // image_hash/image_url, busca o thumbnail preferido do próprio vídeo.
       body["object_story_spec"] = await this.ensureVideoThumbnail(p.objectStorySpec);
     }
+    // Reusa post orgânico já publicado (FB ou IG) sem precisar ler o post antes —
+    // evita exigir escopo de leitura (pages_read_engagement/instagram_basic) que
+    // o token pode não ter; criar o anúncio a partir do próprio post da conta não
+    // exige essa leitura.
+    if (p.objectStoryId) body["object_story_id"] = p.objectStoryId;
+    if (p.sourceInstagramMediaId) body["source_instagram_media_id"] = p.sourceInstagramMediaId;
     if (p.assetFeedSpec) body["asset_feed_spec"] = p.assetFeedSpec;
     if (p.instagramUserId) body["instagram_user_id"] = p.instagramUserId;
     if (p.urlTags) body["url_tags"] = p.urlTags;
