@@ -60,7 +60,11 @@ const ACCOUNT_DESC =
 
 const STATUS_VALUES = ["ACTIVE", "PAUSED", "DELETED", "ARCHIVED"] as const;
 
-const OPTIONAL_SCALAR = z.union([z.string(), z.number()]).optional();
+// IDs do Meta/Google (campaign_id, pixel_id, adset_id...) têm 18 dígitos e estouram
+// Number.MAX_SAFE_INTEGER — se o schema aceitar "number", o transporte JSON pode
+// serializar como número puro e perder precisão nos últimos dígitos antes mesmo do
+// zod validar (ex.: ...950546 virando ...950540). Só string preserva os dígitos exatos.
+const OPTIONAL_SCALAR = z.string().optional();
 
 const STATUS = z
   .union([z.string(), z.array(z.string())])
