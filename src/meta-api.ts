@@ -852,8 +852,9 @@ export class MetaAdsClient {
     if (p.lifetimeBudget != null) body["lifetime_budget"] = p.lifetimeBudget;
     if (hasCbo) body["bid_strategy"] = p.bidStrategy ?? "LOWEST_COST_WITHOUT_CAP";
 
-    // Regra aprendida: OUTCOME_LEADS sem CBO (orçamento por conjunto) exige o flag.
-    if (p.objective === "OUTCOME_LEADS" && !hasCbo) {
+    // Regra aprendida: sem CBO (orçamento fica por conjunto/ABO), a API exige o flag
+    // explícito — não só para OUTCOME_LEADS, a Meta passou a cobrar em qualquer objetivo.
+    if (!hasCbo) {
       body["is_adset_budget_sharing_enabled"] = false;
     }
 
