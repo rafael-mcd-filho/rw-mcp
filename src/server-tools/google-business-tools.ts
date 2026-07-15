@@ -13,6 +13,12 @@ import {
   listBusinessLocalPosts,
   createBusinessLocalPost,
   deleteBusinessLocalPost,
+  getBusinessLocationDetail,
+  searchBusinessCategories,
+  updateBusinessLocation,
+  getBusinessDailyMetrics,
+  getBusinessSearchKeywords,
+  DAILY_METRICS,
 } from "../google-business-api.js";
 
 function json(data: unknown) {
@@ -358,4 +364,251 @@ const TOPIC_TYPE_ENUM = z.enum(["STANDARD", "EVENT", "OFFER"]);
       }
     }
   );
+
+  // ─── Performance + diagnóstico ─────────────────────────────────────────────
+
+  server.tool(
+    "get_google_business_performance",
+    "Métricas de desempenho do perfil (Business Profile Performance API): impressões (Maps/Busca, desktop/mobile), cliques no site, cliques em 'ligar', pedidos de rota, conversas iniciadas. Padrão: últimos 90 dias, só totais.",
+    {
+      ...LOCATION_SCHEMA,
+      since: z.string().optional().describe("Data inicial AAAA-MM-DD. Padrão: 90 dias atrás."),
+      until: z.string().optional().describe("Data final AAAA-MM-DD. Padrão: hoje."),
+      incluir_serie_diaria: z.boolean().optional().describe("Se true, inclui os pontos diários além do total. Padrão false."),
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const locationId = locationIdFrom(a);
+        const { since, until } = defaultRange90d(a);
+
+        const series = await getBusinessDailyMetrics(locationId, DAILY_METRICS, since, until);
+        const incluirSerie = a["incluir_serie_diaria"] === true;
+
+        return json({
+          location_id: locationId,
+          periodo: { desde: since, ate: until },
+          metricas: series.map((s) => ({
+            metrica: s.metric,
+            total: s.points.reduce((sum, p) => sum + p.value, 0),
+            ...(incluirSerie ? { serie_diaria: s.points } : {}),
+          })),
+        });
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "search_google_business_categories",
+    "Busca categorias oficiais do Google (por nome, em português) — usar antes de update_google_business_profile pra descobrir o ID exato de uma categoria (formato categories/gcid:...).",
+    {
+      query: z.string().min(2).describe("Termo de busca, ex: 'agência de marketing', 'barbearia', 'ótica'."),
+      region_code: z.string().optional().describe("Padrão BR."),
+      language_code: z.string().optional().describe("Padrão pt."),
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const query = String(a["query"] ?? "").trim();
+        if (!query) return toolError("Parâmetro obrigatório: query.");
+        const region = (a["region_code"] as string | undefined) ?? "BR";
+        const lang = (a["language_code"] as string | undefined) ?? "pt";
+        return json(await searchBusinessCategories(query, region, lang));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "update_google_business_profile",
+    "Atualiza descrição e/ou categorias adicionais de um Perfil da Empresa no Google. IMPORTANTE: additional_category_ids SUBSTITUI a lista inteira de categorias adicionais (não soma) — confira as atuais em get_google_business_profile_health antes de chamar se quiser preservar alguma. Use search_google_business_categories pra achar os IDs. AÇÃO PÚBLICA — exige confirm=true.",
+    {
+      ...LOCATION_SCHEMA,
+      description: z.string().max(750).optional().describe("Nova descrição do perfil (até 750 caracteres). Evite URLs, telefone ou linguagem promocional — o Google rejeita/oculta descrições assim."),
+      additional_category_ids: z
+        .array(z.string())
+        .optional()
+        .describe("Lista de categorias adicionais, formato 'categories/gcid:xxx' (ver search_google_business_categories). Substitui a lista atual inteira."),
+      ...CONFIRM_SCHEMA,
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+        const description = a["description"] as string | undefined;
+        const additionalIds = a["additional_category_ids"] as string[] | undefined;
+
+        if (!description && !additionalIds) {
+          return toolError("Informe ao menos um de: description, additional_category_ids.");
+        }
+
+        const patch: Record<string, unknown> = {};
+        const mask: string[] = [];
+
+        if (description) {
+          patch.profile = { description };
+          mask.push("profile.description");
+        }
+
+        if (additionalIds) {
+          const current = await getBusinessLocationDetail(locationId);
+          const primary = current.categories?.primaryCategory;
+          if (!primary) return toolError("Não foi possível ler a categoria primária atual — aplique manualmente pra não perdê-la.");
+          patch.categories = {
+            primaryCategory: { name: primary.name },
+            additionalCategories: additionalIds.map((id) => ({ name: id.startsWith("categories/") ? id : `categories/${id}` })),
+          };
+          mask.push("categories");
+        }
+
+        const guard = previewGuard(a, "atualizar_perfil", { account_id: accountId, location_id: locationId, ...patch });
+        if (guard) return guard;
+
+        return json(await updateBusinessLocation(locationId, patch, mask));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "get_google_business_profile_health",
+    "Diagnóstico completo de 1 perfil do Google Business: completude do cadastro (categoria, descrição, horário), taxa de resposta a avaliações, cadência de postagens e métricas de performance dos últimos 90 dias — com uma lista de pontos de melhoria priorizados. Combina várias chamadas (mais lento que as tools individuais).",
+    { ...LOCATION_SCHEMA },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+
+        const [detail, reviews, posts] = await Promise.all([
+          getBusinessLocationDetail(locationId),
+          listBusinessReviews(accountId, locationId),
+          listBusinessLocalPosts(accountId, locationId),
+        ]);
+
+        const { since, until } = defaultRange90d({});
+        let metrics: Awaited<ReturnType<typeof getBusinessDailyMetrics>> = [];
+        try {
+          metrics = await getBusinessDailyMetrics(locationId, DAILY_METRICS, since, until);
+        } catch {
+          // segue sem métricas — local pode ser muito novo ou sem dado suficiente
+        }
+
+        let keywords: Awaited<ReturnType<typeof getBusinessSearchKeywords>> = [];
+        try {
+          const now = new Date();
+          const endMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+          const past = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+          const startMonth = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, "0")}`;
+          keywords = await getBusinessSearchKeywords(locationId, startMonth, endMonth);
+        } catch {
+          // idem
+        }
+
+        const metricTotal = (name: string) => metrics.find((m) => m.metric === name)?.points.reduce((s, p) => s + p.value, 0) ?? 0;
+        const totalImpressoes =
+          metricTotal("BUSINESS_IMPRESSIONS_DESKTOP_MAPS") +
+          metricTotal("BUSINESS_IMPRESSIONS_DESKTOP_SEARCH") +
+          metricTotal("BUSINESS_IMPRESSIONS_MOBILE_MAPS") +
+          metricTotal("BUSINESS_IMPRESSIONS_MOBILE_SEARCH");
+        const cliquesSite = metricTotal("WEBSITE_CLICKS");
+        const cliquesLigar = metricTotal("CALL_CLICKS");
+        const conversas = metricTotal("BUSINESS_CONVERSATIONS");
+        const pedidosRota = metricTotal("BUSINESS_DIRECTION_REQUESTS");
+
+        const totalReviews = reviews.length;
+        const semResposta = reviews.filter((r) => !r.reviewReply?.comment).length;
+        const taxaResposta = totalReviews > 0 ? Math.round(((totalReviews - semResposta) / totalReviews) * 1000) / 10 : null;
+
+        const descricao = detail.profile?.description ?? "";
+        const qtdCategoriasAdicionais = detail.categories?.additionalCategories?.length ?? 0;
+        const verificado = !!detail.metadata?.hasVoiceOfMerchant;
+
+        const posts_ordenados = [...posts].sort(
+          (x, y) => new Date((y as { createTime?: string }).createTime ?? 0).getTime() - new Date((x as { createTime?: string }).createTime ?? 0).getTime()
+        );
+        const ultimoPost = posts_ordenados[0] as { createTime?: string } | undefined;
+        const diasDesdeUltimoPost = ultimoPost?.createTime
+          ? Math.round((Date.now() - new Date(ultimoPost.createTime).getTime()) / 86_400_000)
+          : null;
+
+        type Ponto = { prioridade: "alta" | "media"; achado: string };
+        const pontos: Ponto[] = [];
+
+        if (!verificado) {
+          pontos.push({ prioridade: "alta", achado: "Perfil sem hasVoiceOfMerchant (não aparenta estar totalmente verificado) — pode limitar edição via API." });
+        }
+        if (descricao.length < 100) {
+          pontos.push({ prioridade: "alta", achado: `Descrição do perfil muito curta (${descricao.length} de até 750 caracteres) — pouco conteúdo pra converter quem visita.` });
+        }
+        if (totalImpressoes > 0 && cliquesSite + cliquesLigar + conversas === 0) {
+          pontos.push({ prioridade: "alta", achado: `${totalImpressoes} impressões em 90 dias sem nenhum clique de conversão (site/ligação/mensagem) — só ${pedidosRota} pedidos de rota.` });
+        }
+        if (totalReviews > 0 && semResposta > 0) {
+          pontos.push({
+            prioridade: semResposta / totalReviews > 0.5 ? "alta" : "media",
+            achado: `${semResposta} de ${totalReviews} avaliações sem resposta (${(100 - (taxaResposta ?? 0)).toFixed(1)}% pendente).`,
+          });
+        }
+        if (qtdCategoriasAdicionais === 0) {
+          pontos.push({ prioridade: "media", achado: "Nenhuma categoria adicional cadastrada — só a primária, o que limita em quantas buscas o perfil aparece." });
+        }
+        if (keywords.length > 0 && keywords.length <= 3) {
+          pontos.push({ prioridade: "media", achado: `Pouquíssimo volume de busca orgânica captado nos últimos 6 meses (${keywords.length} termo(s)) — SEO local fraco.` });
+        }
+        if (posts.length === 0) {
+          pontos.push({ prioridade: "media", achado: "Nenhuma postagem no perfil — Google prioriza perfis ativos no ranking local." });
+        } else if (diasDesdeUltimoPost != null && diasDesdeUltimoPost > 30) {
+          pontos.push({ prioridade: "media", achado: `Último post há ${diasDesdeUltimoPost} dias — cadência de postagem baixa.` });
+        }
+
+        pontos.sort((x, y) => (x.prioridade === y.prioridade ? 0 : x.prioridade === "alta" ? -1 : 1));
+
+        return json({
+          location_id: locationId,
+          titulo: detail.title,
+          completude: {
+            verificado,
+            categoria_primaria: detail.categories?.primaryCategory?.displayName ?? null,
+            categorias_adicionais: detail.categories?.additionalCategories?.map((c) => c.displayName) ?? [],
+            descricao_chars: descricao.length,
+            tem_horario: !!detail.regularHours?.periods?.length,
+            tem_site: !!detail.websiteUri,
+            tem_telefone: !!detail.phoneNumbers,
+          },
+          avaliacoes: { total: totalReviews, sem_resposta: semResposta, taxa_resposta_pct: taxaResposta },
+          postagens: { total: posts.length, dias_desde_ultimo_post: diasDesdeUltimoPost },
+          performance_90d: {
+            periodo: { desde: since, ate: until },
+            impressoes_totais: totalImpressoes,
+            cliques_site: cliquesSite,
+            cliques_ligar: cliquesLigar,
+            conversas_iniciadas: conversas,
+            pedidos_de_rota: pedidosRota,
+          },
+          termos_de_busca_6m: keywords.slice(0, 15),
+          pontos_de_melhoria: pontos,
+        });
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+}
+
+function defaultRange90d(a: Record<string, unknown>): { since: string; until: string } {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const until = (a["until"] as string | undefined) ?? iso(new Date());
+  let since = a["since"] as string | undefined;
+  if (!since) {
+    const d = new Date();
+    d.setDate(d.getDate() - 90);
+    since = iso(d);
+  }
+  return { since, until };
 }
