@@ -15,14 +15,14 @@ skill define **como interpretar, comparar e apresentar** do jeito do cliente.
 ## Fluxo
 
 1. **Identifique a conta.** Se o usuário não deixar claro qual cliente, chame
-   `list_ad_accounts` e confirme. Cada cliente tem um `account_id` (veja
+   `meta_list_ad_accounts` e confirme. Cada cliente tem um `account_id` (veja
    Benchmarks abaixo). Passe `account_id` em todas as chamadas.
 2. **Defina o período.** "ontem" → `date_preset: yesterday`; "essa semana" →
    `this_week_mon_today`; "últimos 7 dias" → `last_7d`. Datas específicas → `since`/`until`.
 3. **Escolha o tool:**
-   - Visão geral da conta → `get_account_report` (todas as campanhas de uma vez).
-   - Uma campanha específica → `get_campaign_report`.
-   - Comparar dois períodos → `get_campaign_report` com `compare_since`/`compare_until`.
+   - Visão geral da conta → `meta_get_account_report` (todas as campanhas de uma vez).
+   - Uma campanha específica → `meta_get_campaign_report`.
+   - Comparar dois períodos → `meta_get_campaign_report` com `compare_since`/`compare_until`.
 4. **Narre com julgamento.** Não despeje os números crus: aplique os benchmarks,
    destaque o que mudou e aponte 1–2 pontos de atenção. Seja objetivo.
 

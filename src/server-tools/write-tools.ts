@@ -5,8 +5,8 @@
 //   - Criar objetos PAUSED/inertes (campanha, conjunto, criativo, anúncio,
 //     vídeo, imagem, público, duplicação) NÃO pede confirmação — não gasta nada
 //     e é reversível. A segurança fica na ATIVAÇÃO.
-//   - Ações que gastam ou destroem (set_status ACTIVE, schedule_budget_increase,
-//     update_object, delete_object, swap_url_tags) exigem confirm=true; sem ele,
+//   - Ações que gastam ou destroem (meta_set_status ACTIVE, meta_schedule_budget_increase,
+//     meta_update_object, meta_delete_object, meta_swap_url_tags) exigem confirm=true; sem ele,
 //     o tool só devolve um preview e não altera nada.
 //   - Criação em lote oferece dry_run=true para revisar o plano antes.
 
@@ -81,7 +81,7 @@ function toUnix(v: string | number): number {
 export function registerWriteTools(server: McpServer, client: MetaAdsClient): void {
   // ─── Descoberta de assets ────────────────────────────────────────────────────
   server.tool(
-    "get_account_assets",
+    "meta_get_account_assets",
     "Descobre as páginas do Facebook e contas do Instagram vinculadas à conta de anúncios. Use ANTES de criar criativos para obter page_id e instagram_user_id sem precisar perguntar ao usuário.",
     { ...ACCOUNT_SCHEMA },
     async (args) => {
@@ -95,7 +95,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Targeting: busca (read-only) ─────────────────────────────────────────────
   server.tool(
-    "search_geolocations",
+    "meta_search_geolocations",
     "Busca localizações (cidade, região, país, CEP) e retorna a 'key' que o targeting usa. Ex: buscar 'Recife' devolve a key da cidade para usar em geo_locations.cities.",
     {
       q: z.string().describe("Texto a buscar (ex: 'Recife', 'São Paulo')."),
@@ -115,7 +115,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "search_interests",
+    "meta_search_interests",
     "Busca interesses de segmentação detalhada e retorna id + nome + audience_size. Use os ids em targeting.flexible_spec[].interests.",
     {
       q: z.string().describe("Termo do interesse (ex: 'gastronomia', 'pets')."),
@@ -131,7 +131,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "search_behaviors",
+    "meta_search_behaviors",
     "Lista comportamentos de segmentação disponíveis (id + nome). Use os ids em targeting.flexible_spec[].behaviors.",
     { limit: z.number().optional().describe("Máximo de resultados (padrão 100).") },
     async (args) => {
@@ -144,7 +144,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "estimate_reach",
+    "meta_estimate_reach",
     "Estima o alcance/tamanho de público de um targeting antes de criar o conjunto. Retorna estimate_dau/mau e a estimativa de entrega.",
     {
       ...ACCOUNT_SCHEMA,
@@ -170,7 +170,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Criação (PAUSED/inerte — sem trava) ──────────────────────────────────────
   server.tool(
-    "create_campaign",
+    "meta_create_campaign",
     "Cria uma campanha (sempre PAUSED — sem custo até ativar). Para OUTCOME_LEADS sem orçamento de campanha (ABO), o flag is_adset_budget_sharing_enabled=false é aplicado automaticamente. Definir daily_budget/lifetime_budget aqui = CBO.",
     {
       ...ACCOUNT_SCHEMA,
@@ -178,7 +178,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       objective: z
         .string()
         .describe("Objetivo (ex: OUTCOME_LEADS, OUTCOME_TRAFFIC, OUTCOME_SALES, OUTCOME_ENGAGEMENT, OUTCOME_AWARENESS)."),
-      status: STATUS_ENUM.optional().describe("Padrão PAUSED. Ative depois com set_status."),
+      status: STATUS_ENUM.optional().describe("Padrão PAUSED. Ative depois com meta_set_status."),
       special_ad_categories: z
         .array(z.string())
         .optional()
@@ -210,8 +210,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_adset",
-    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE. Para vários conjuntos parecidos, prefira create_adsets_batch.",
+    "meta_create_adset",
+    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE. Para vários conjuntos parecidos, prefira meta_create_adsets_batch.",
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do conjunto."),
@@ -248,7 +248,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_creative",
+    "meta_create_creative",
     "Cria um criativo. Para vídeo, se o video_data não tiver image_hash/image_url, o thumbnail é buscado automaticamente do vídeo. O display link fica em call_to_action.value.link_caption. ATENÇÃO: object_story_spec + asset_feed_spec juntos (ex: WhatsApp addon) pode falhar com erro 3 se o app não tiver capability de Marketing Partner.",
     {
       ...ACCOUNT_SCHEMA,
@@ -269,7 +269,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         .record(z.unknown())
         .optional()
         .describe("DCO / variações de texto / message_extensions (WhatsApp). Pode exigir capability."),
-      instagram_user_id: z.string().optional().describe("ID da conta IG (use get_account_assets)."),
+      instagram_user_id: z.string().optional().describe("ID da conta IG (use meta_get_account_assets)."),
       url_tags: z.string().optional().describe("UTMs (ex: 'utm_source=facebook&utm_medium=cpc')."),
       degrees_of_freedom_spec: z
         .record(z.unknown())
@@ -298,13 +298,13 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_ad",
+    "meta_create_ad",
     "Cria um anúncio (sempre PAUSED) ligando um conjunto a um criativo existente.",
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do anúncio."),
       adset_id: z.string().describe("ID do conjunto."),
-      creative_id: z.string().describe("ID do criativo (de create_creative)."),
+      creative_id: z.string().describe("ID do criativo (de meta_create_creative)."),
       conversion_domain: z.string().optional().describe("Domínio de conversão (ex: 'plugguest.com.br')."),
       degrees_of_freedom_spec: z.record(z.unknown()).optional().describe("OPT_OUT de creative features."),
       status: STATUS_ENUM.optional().describe("Padrão PAUSED."),
@@ -330,7 +330,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Criação em lote (#1) ─────────────────────────────────────────────────────
   server.tool(
-    "create_adsets_batch",
+    "meta_create_adsets_batch",
     "Cria VÁRIOS conjuntos de uma vez a partir de um template (base) + lista de variações — ideal para dividir por idade, geo, público, etc. Se creative_id for passado, cria também um anúncio por conjunto. Use dry_run=true para revisar o plano antes de criar. Não interrompe no erro: reporta sucesso/falha por item. Tudo PAUSED.",
     {
       ...ACCOUNT_SCHEMA,
@@ -422,7 +422,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Mídia (upload — inerte, sem trava) ───────────────────────────────────────
   server.tool(
-    "create_video",
+    "meta_create_video",
     "Envia um vídeo para a conta a partir de uma URL (a Meta baixa o arquivo). Retorna o video_id para usar no criativo (o thumbnail é resolvido automaticamente ao criar o criativo).",
     {
       ...ACCOUNT_SCHEMA,
@@ -449,7 +449,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_image",
+    "meta_create_image",
     "Envia uma imagem para a conta a partir de uma URL. Retorna o image_hash para usar em criativos (link_data.image_hash ou video_data.image_hash como thumbnail).",
     {
       ...ACCOUNT_SCHEMA,
@@ -473,7 +473,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Públicos (criação — inerte, sem trava) ───────────────────────────────────
   server.tool(
-    "create_custom_audience",
+    "meta_create_custom_audience",
     [
       "Cria um público personalizado. Sem `rule` = público vazio (preencher depois ou upload de lista).",
       "Com `rule` = público de regra. NÃO passar subtype — a API infere automaticamente (pixel→WEBSITE, ig_business→IG_BUSINESS). Passar subtype com rule causa erro.",
@@ -498,8 +498,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       '- todos os visitantes: filter {"field":"url","operator":"i_contains","value":""} + adicionar "template":"ALL_VISITORS" no objeto da regra (NÃO é event=PageView)',
       "",
       "retention_seconds: 7D=604800 15D=1296000 30D=2592000 60D=5184000 90D=7776000 180D=15552000 365D=31536000.",
-      "Os IDs (pixel, ig_business) são por conta: pegue com get_custom_audience num público existente ou list_pixels.",
-      "Dúvida sobre algum literal? Inspecione um público real com get_custom_audience e copie a rule.",
+      "Os IDs (pixel, ig_business) são por conta: pegue com meta_get_custom_audience num público existente ou meta_list_pixels.",
+      "Dúvida sobre algum literal? Inspecione um público real com meta_get_custom_audience e copie a rule.",
     ].join("\n"),
     {
       ...ACCOUNT_SCHEMA,
@@ -514,7 +514,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         .string()
         .optional()
         .describe(
-          'Regra de segmentação em JSON (string). Ex pixel/Lead 180D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"pixel","id":959959936733237}],"retention_seconds":15552000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"Lead"}]}}]}}. Ex IG visitou perfil 90D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"ig_business","id":7216187821753505}],"retention_seconds":7776000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"ig_business_profile_visit"}]}}]}}. Combinar = mais objetos em rules (mesma fonte). Ver dicionário de eventos na descrição do tool; copie literais de um público real com get_custom_audience.'
+          'Regra de segmentação em JSON (string). Ex pixel/Lead 180D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"pixel","id":959959936733237}],"retention_seconds":15552000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"Lead"}]}}]}}. Ex IG visitou perfil 90D: {"inclusions":{"operator":"or","rules":[{"event_sources":[{"type":"ig_business","id":7216187821753505}],"retention_seconds":7776000,"filter":{"operator":"and","filters":[{"field":"event","operator":"eq","value":"ig_business_profile_visit"}]}}]}}. Combinar = mais objetos em rules (mesma fonte). Ver dicionário de eventos na descrição do tool; copie literais de um público real com meta_get_custom_audience.'
         ),
       prefill: z
         .boolean()
@@ -555,7 +555,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_lookalike",
+    "meta_create_lookalike",
     "Cria um público semelhante (lookalike) a partir de um público de origem. spec ex: {country:'BR', ratio:0.01} (1%).",
     {
       ...ACCOUNT_SCHEMA,
@@ -580,14 +580,14 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "create_saved_audience",
+    "meta_create_saved_audience",
     [
       "Cria um Público Salvo (Saved Audience): pacote reutilizável de targeting (local, idade, gênero,",
       "direcionamento detalhado/interesses, públicos personalizados incluídos/excluídos, Advantage+ audience)",
       "que fica disponível na aba \"Públicos\" do Gerenciador e pode ser reaproveitado ao montar novos conjuntos.",
       "",
-      "Diferente de create_custom_audience (que cria retargeting/lookalike a partir de pixel, IG ou lista):",
-      "aqui `targeting` é o MESMO objeto usado em create_adset — geo_locations, age_min, age_max, genders,",
+      "Diferente de meta_create_custom_audience (que cria retargeting/lookalike a partir de pixel, IG ou lista):",
+      "aqui `targeting` é o MESMO objeto usado em meta_create_adset — geo_locations, age_min, age_max, genders,",
       "flexible_spec (interests/behaviors), custom_audiences, excluded_custom_audiences, publisher_platforms,",
       "e targeting_automation.advantage_audience (0=desativado/fixo, 1=ativado/deixa a Meta expandir).",
     ].join("\n"),
@@ -597,7 +597,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       targeting: z
         .record(z.unknown())
         .describe(
-          "Spec de targeting completo (geo_locations, age_min/max, genders, flexible_spec, custom_audiences, excluded_custom_audiences, targeting_automation.advantage_audience, etc.) — mesmo formato de create_adset."
+          "Spec de targeting completo (geo_locations, age_min/max, genders, flexible_spec, custom_audiences, excluded_custom_audiences, targeting_automation.advantage_audience, etc.) — mesmo formato de meta_create_adset."
         ),
       description: z.string().optional().describe("Descrição opcional."),
     },
@@ -619,7 +619,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Duplicação (cópia PAUSED — sem trava) ────────────────────────────────────
   server.tool(
-    "duplicate_object",
+    "meta_duplicate_object",
     "Duplica uma campanha, conjunto ou anúncio (cópia sempre PAUSED). Para campanha, deep_copy=true copia também conjuntos e anúncios. Para conjunto, target_campaign_id move a cópia pra outra campanha (útil pra clonar um conjunto com configuração já validada em vez de recriar do zero). Para anúncio, target_adset_id move a cópia pra outro conjunto.",
     {
       id: z.string().describe("ID do objeto a duplicar."),
@@ -652,8 +652,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   // ═══════════════════════════════════════════════════════════════════════════
 
   server.tool(
-    "update_object",
-    "Edita campos de uma campanha, conjunto ou anúncio pelo ID (name, daily_budget em centavos, lifetime_budget, targeting, bid_amount, etc). Para apenas mudar status prefira set_status. Exige confirm=true.",
+    "meta_update_object",
+    "Edita campos de uma campanha, conjunto ou anúncio pelo ID (name, daily_budget em centavos, lifetime_budget, targeting, bid_amount, etc). Para apenas mudar status prefira meta_set_status. Exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
       id: z.string().describe("ID do objeto (campanha, conjunto ou anúncio)."),
@@ -665,7 +665,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       try {
         const id = args.id as string;
         const fields = args.fields as Record<string, unknown>;
-        const guard = previewGuard(args, "update_object", { id, fields });
+        const guard = previewGuard(args, "meta_update_object", { id, fields });
         if (guard) return guard;
         return json(await client.updateObject(id, fields));
       } catch (e) {
@@ -675,7 +675,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "set_status",
+    "meta_set_status",
     "Muda o status de uma campanha/conjunto/anúncio (ACTIVE, PAUSED, ARCHIVED). Ao ATIVAR uma campanha, ativa em cascata todos os conjuntos e anúncios dentro dela. Exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
@@ -693,7 +693,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
         const objectType = args.object_type as "campaign" | "adset" | "ad" | undefined;
         const cascade = status === "ACTIVE" && objectType === "campaign";
 
-        const guard = previewGuard(args, "set_status", {
+        const guard = previewGuard(args, "meta_set_status", {
           id,
           status,
           cascata: cascade ? "ativa também todos os conjuntos e anúncios da campanha" : "somente este objeto",
@@ -720,7 +720,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "delete_object",
+    "meta_delete_object",
     "Exclui permanentemente uma campanha, conjunto ou anúncio pelo ID. Ação irreversível — exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
@@ -729,7 +729,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
     async (args) => {
       try {
         const id = args.id as string;
-        const guard = previewGuard(args, "delete_object", { id, aviso: "EXCLUSÃO PERMANENTE" });
+        const guard = previewGuard(args, "meta_delete_object", { id, aviso: "EXCLUSÃO PERMANENTE" });
         if (guard) return guard;
         return json(await client.deleteObject(id));
       } catch (e) {
@@ -739,7 +739,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "swap_url_tags",
+    "meta_swap_url_tags",
     "Troca os url_tags (UTMs) de um anúncio. Como criativos são imutáveis, recria o criativo com os UTMs novos (reusando o post original) e aponta o anúncio para ele. Mexe num anúncio existente — exige confirm=true.",
     {
       ...ACCOUNT_SCHEMA,
@@ -751,7 +751,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       try {
         const adId = args.ad_id as string;
         const urlTags = args.url_tags as string;
-        const guard = previewGuard(args, "swap_url_tags", { ad_id: adId, url_tags: urlTags });
+        const guard = previewGuard(args, "meta_swap_url_tags", { ad_id: adId, url_tags: urlTags });
         if (guard) return guard;
         return json(await client.swapUrlTags(adId, urlTags, accountIdFrom(args)));
       } catch (e) {
@@ -761,7 +761,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
   );
 
   server.tool(
-    "schedule_budget_increase",
+    "meta_schedule_budget_increase",
     "Programa um aumento de orçamento num conjunto durante um período (a 'Programação do orçamento' da interface). budget_value em CENTAVOS. ABSOLUTE = orçamento alvo no período; MULTIPLIER = fator sobre o orçamento base. Afeta gasto — exige confirm=true.",
     {
       ...CONFIRM_SCHEMA,
@@ -792,7 +792,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
           budgetValueType: args.budget_value_type as string | undefined,
           recurrenceType: args.recurrence_type as string | undefined,
         };
-        const guard = previewGuard(args, "schedule_budget_increase", { adset_id: adsetId, ...p });
+        const guard = previewGuard(args, "meta_schedule_budget_increase", { adset_id: adsetId, ...p });
         if (guard) return guard;
         return json(await client.createBudgetSchedule(adsetId, p));
       } catch (e) {

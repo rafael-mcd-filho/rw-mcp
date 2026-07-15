@@ -692,7 +692,7 @@ export function createMcpServer(
   // ─── Contas ─────────────────────────────────────────────────────────────────
 
   server.tool(
-    "list_ad_accounts",
+    "meta_list_ad_accounts",
     "Lista todas as contas de anúncios que o token tem acesso (id, nome, moeda, status). Use para descobrir o account_id de cada cliente.",
     {
       ...COMMON_COMPAT_SCHEMA,
@@ -702,7 +702,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_ad_account",
+    "meta_get_ad_account",
     "Informações de uma conta: nome, status, moeda, fuso, saldo e gasto total.",
     {
       ...COMMON_COMPAT_SCHEMA,
@@ -714,7 +714,7 @@ export function createMcpServer(
   // ─── Campanhas ──────────────────────────────────────────────────────────────
 
   server.tool(
-    "list_campaigns",
+    "meta_list_campaigns",
     "Lista campanhas da conta. Filtre por status: ACTIVE, PAUSED, DELETED, ARCHIVED.",
     {
       ...COMMON_COMPAT_SCHEMA,
@@ -725,7 +725,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_campaign",
+    "meta_get_campaign",
     "Detalhes de uma campanha específica pelo ID.",
     {
       ...CAMPAIGN_ID_SCHEMA,
@@ -738,7 +738,7 @@ export function createMcpServer(
   // ─── Conjuntos e Anúncios ─────────────────────────────────────────────────────
 
   server.tool(
-    "list_adsets",
+    "meta_list_adsets",
     "Lista conjuntos de anúncios. Pode filtrar por campanha e/ou status.",
     {
       ...CAMPAIGN_ID_SCHEMA,
@@ -750,7 +750,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "list_ads",
+    "meta_list_ads",
     "Lista anúncios. Pode filtrar por conjunto, campanha e/ou status.",
     {
       adset_id: z.string().optional().describe("ID do conjunto de anúncios"),
@@ -766,21 +766,21 @@ export function createMcpServer(
   // ─── Mídia e públicos (leitura) ───────────────────────────────────────────────
 
   server.tool(
-    "list_videos",
+    "meta_list_videos",
     "Lista os vídeos da conta (id, título, data, duração em segundos). Use para o usuário escolher qual vídeo usar num criativo.",
     { ...ACCOUNT_ID_SCHEMA },
     async (args) => json(await client.listVideos(accountIdFrom(args)))
   );
 
   server.tool(
-    "list_images",
+    "meta_list_images",
     "Lista as imagens da conta (hash, nome, url, dimensões). O hash é o que se usa em image_hash nos criativos.",
     { ...ACCOUNT_ID_SCHEMA },
     async (args) => json(await client.listImages(accountIdFrom(args)))
   );
 
   server.tool(
-    "list_ig_media",
+    "meta_list_ig_media",
     "Lista mídias orgânicas de um perfil do Instagram (id, media_type, timestamp, caption, permalink). Use para obter os IDs de vídeos a incluir em públicos personalizados de engajamento de vídeo. O ig_user_id é o ig_business ID — o mesmo usado nas rules de públicos IG (ex: 7399517663443204 para Recife).",
     {
       ig_user_id: z.string().describe("ID do perfil do Instagram (ig_business ID)."),
@@ -804,21 +804,21 @@ export function createMcpServer(
   );
 
   server.tool(
-    "list_custom_audiences",
+    "meta_list_custom_audiences",
     "Lista os públicos personalizados da conta (id, nome, subtype, tamanho aproximado). Use para escolher públicos a incluir ou excluir no targeting.",
     { ...ACCOUNT_ID_SCHEMA },
     async (args) => json(await client.listCustomAudiences(accountIdFrom(args)))
   );
 
   server.tool(
-    "list_saved_audiences",
-    "Lista os Públicos Salvos (Saved Audiences) da conta — pacotes de targeting (local, idade, interesses, públicos) reutilizáveis ao criar conjuntos. Diferente de list_custom_audiences (retargeting/lookalike).",
+    "meta_list_saved_audiences",
+    "Lista os Públicos Salvos (Saved Audiences) da conta — pacotes de targeting (local, idade, interesses, públicos) reutilizáveis ao criar conjuntos. Diferente de meta_list_custom_audiences (retargeting/lookalike).",
     { ...ACCOUNT_ID_SCHEMA },
     async (args) => json(await client.listSavedAudiences(accountIdFrom(args)))
   );
 
   server.tool(
-    "get_custom_audience",
+    "meta_get_custom_audience",
     "Detalhes de um público pelo ID, incluindo a `rule` (regra de segmentação). Use para inspecionar a estrutura exata de um público de regra existente (eventos de pixel ou de engajamento do Instagram) e reusar como base ao criar novos.",
     {
       audience_id: z.string().describe("ID do público personalizado."),
@@ -834,7 +834,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_creative",
+    "meta_get_creative",
     "Detalhes de um criativo pelo ID (object_story_spec, asset_feed_spec, url_tags, instagram_user_id, etc). Útil para inspecionar ou reusar a configuração de um criativo existente.",
     {
       creative_id: z.string().describe("ID do criativo."),
@@ -845,7 +845,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_preview",
+    "meta_get_preview",
     "Gera o preview (HTML em iframe) de um criativo num posicionamento, para validar como o anúncio aparece ANTES de ativar. ad_format='all' retorna os principais formatos do Instagram.",
     {
       creative_id: z.string().describe("ID do criativo."),
@@ -882,7 +882,7 @@ export function createMcpServer(
   // ─── Insights brutos ──────────────────────────────────────────────────────────
 
   server.tool(
-    "get_insights",
+    "meta_get_insights",
     "Métricas cruas para UM período. Inclui spend, reach, frequency, actions, cost_per_action_type, action_values, ROAS, rankings e métricas de vídeo quando disponíveis.",
     {
       level: z.enum(["account", "campaign", "adset", "ad"]).describe("Nível de agregação"),
@@ -966,7 +966,7 @@ export function createMcpServer(
   // ─── Pixels / datasets ──────────────────────────────────────────────────────
 
   server.tool(
-    "list_pixels",
+    "meta_list_pixels",
     "Lista pixels/datasets vinculados à conta. Apenas leitura.",
     {
       ...COMMON_COMPAT_SCHEMA,
@@ -976,7 +976,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_pixel",
+    "meta_get_pixel",
     "Detalhes de um pixel/dataset pelo ID. Apenas leitura.",
     {
       ...PIXEL_ID_SCHEMA,
@@ -987,7 +987,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_pixel_events",
+    "meta_get_pixel_events",
     "Resumo de eventos recebidos por um pixel no período informado.",
     {
       ...PIXEL_ID_SCHEMA,
@@ -1005,7 +1005,7 @@ export function createMcpServer(
   );
 
   server.tool(
-    "get_pixel_diagnostics",
+    "meta_get_pixel_diagnostics",
     "Diagnóstico de saúde do pixel: último disparo, eventos recentes, automatic matching e problemas encontrados.",
     {
       ...PIXEL_ID_SCHEMA,
@@ -1018,7 +1018,7 @@ export function createMcpServer(
   // ─── Relatório de campanha (detecção automática de objetivo) ──────────────────
 
   server.tool(
-    "get_campaign_report",
+    "meta_get_campaign_report",
     `Relatório PRONTO de uma campanha, agregado e formatado.
 Detecta o objetivo pelo nome ([MSG], [LEAD], [PERFIL], [VENDA], [REC], [ENG]) e pelo objective da Meta, escolhe o action_type de conversão e calcula CPA/CPL/CPC/CPM/CTR (e ThruPlay em reconhecimento).
 Passe compare_since/compare_until para comparar dois períodos com variação %.`,
@@ -1069,7 +1069,7 @@ Passe compare_since/compare_until para comparar dois períodos com variação %.
   // ─── Relatório da conta inteira ───────────────────────────────────────────────
 
   server.tool(
-    "get_account_report",
+    "meta_get_account_report",
     `Relatório consolidado de TODAS as campanhas que rodaram no período, numa só chamada.
 Detecta o objetivo de cada campanha e mostra o resultado certo de cada uma (leads, conversas, visitas, alcance...), com totais e custo por resultado. Ideal para "como foi a conta ontem / essa semana".
 Passe incluir_diario=true para receber também a evolução dia a dia (gasto, resultados, cliques, CTR e custo por resultado de cada dia).`,
@@ -1110,7 +1110,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
   // ─── Relatório em PDF ─────────────────────────────────────────────────────────
 
   server.tool(
-    "generate_report_pdf",
+    "meta_generate_report_pdf",
     `Gera relatório Meta Ads em PDF com 4 páginas: resumo + funil, conjuntos de anúncio, anúncios e demográficos (gênero/idade). formato='pdf' (padrão) ou 'html'.`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
@@ -1258,7 +1258,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
   // ─── Relatório CPL Beco Mágico (todas as unidades, junho 2026) ───────────────
 
   server.tool(
-    "generate_beco_magico_cpl_report",
+    "meta_generate_beco_magico_cpl_report",
     "Gera relatório de CPL e estimativa de investimento das 5 unidades do Beco Mágico (Natal, João Pessoa, Recife, Manaus e Goiânia) para junho de 2026, com projeção de investimento para faturar R$120k por unidade considerando escala de +35% no CPL. formato='pdf' (padrão) ou 'html'.",
     { ...FORMATO_SCHEMA },
     async (args) => {
@@ -1680,7 +1680,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
     );
 
     server.tool(
-      "generate_google_comparison_report_pdf",
+      "generate_google_ads_comparison_report_pdf",
       "Gera PDF comparativo do Google Ads entre periodo atual e anterior.",
       {
         ...GADS_CUSTOMER_SCHEMA,
@@ -1713,7 +1713,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
     );
 
     if (exposeQa) server.tool(
-      "qa_google_comparison_report_pdf",
+      "qa_google_ads_comparison_report_pdf",
       "Executa QA visual do PDF comparativo Google Ads sem salvar arquivo.",
       {
         ...GADS_CUSTOMER_SCHEMA,
@@ -1745,7 +1745,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
     );
 
     server.tool(
-      "generate_google_report_pdf",
+      "generate_google_ads_report_pdf",
       "Gera relatório de Google Ads com resumo, campanhas, grupos de anúncio, keywords, ações de conversão e demográficos. formato='pdf' (entrega) ou 'html' (dashboard navegável).",
       {
         ...GADS_CUSTOMER_SCHEMA,
@@ -1802,7 +1802,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
     );
 
     if (exposeQa) server.tool(
-      "qa_google_report_pdf",
+      "qa_google_ads_report_pdf",
       "Executa QA visual do PDF Google Ads sem salvar arquivo.",
       {
         ...GADS_CUSTOMER_SCHEMA,
