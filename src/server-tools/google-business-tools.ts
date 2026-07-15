@@ -122,6 +122,19 @@ function formatReview(r: {
 }
 
 const CALL_TO_ACTION_ENUM = z.enum(["BOOK", "ORDER", "SHOP", "LEARN_MORE", "SIGN_UP", "CALL"]);
+const TOPIC_TYPE_ENUM = z.enum(["STANDARD", "EVENT", "OFFER"]);
+
+function parseDateStr(label: string, s: string): { year: number; month: number; day: number } {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) throw new Error(`${label} deve estar no formato AAAA-MM-DD.`);
+  return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
+}
+
+function parseTimeStr(label: string, s: string): { hours: number; minutes: number } {
+  const m = /^(\d{2}):(\d{2})$/.exec(s);
+  if (!m) throw new Error(`${label} deve estar no formato HH:MM.`);
+  return { hours: Number(m[1]), minutes: Number(m[2]) };
+}
 
 export function registerGoogleBusinessTools(server: McpServer): void {
   server.tool(
@@ -245,20 +258,6 @@ export function registerGoogleBusinessTools(server: McpServer): void {
       }
     }
   );
-
-function parseDateStr(label: string, s: string): { year: number; month: number; day: number } {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) throw new Error(`${label} deve estar no formato AAAA-MM-DD.`);
-  return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
-}
-
-function parseTimeStr(label: string, s: string): { hours: number; minutes: number } {
-  const m = /^(\d{2}):(\d{2})$/.exec(s);
-  if (!m) throw new Error(`${label} deve estar no formato HH:MM.`);
-  return { hours: Number(m[1]), minutes: Number(m[2]) };
-}
-
-const TOPIC_TYPE_ENUM = z.enum(["STANDARD", "EVENT", "OFFER"]);
 
   server.tool(
     "create_google_business_post",

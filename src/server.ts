@@ -1259,7 +1259,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
   server.tool(
     "meta_generate_beco_magico_cpl_report",
-    "Gera relatório de CPL e estimativa de investimento das 5 unidades do Beco Mágico (Natal, João Pessoa, Recife, Manaus e Goiânia) para junho de 2026, com projeção de investimento para faturar R$120k por unidade considerando escala de +35% no CPL. formato='pdf' (padrão) ou 'html'.",
+    "[TOOL DE CLIENTE ÚNICO — não reutilizável para outras contas] Gera relatório de CPL e estimativa de investimento das 5 unidades do Beco Mágico (Natal, João Pessoa, Recife, Manaus e Goiânia) para junho de 2026, com projeção de investimento para faturar R$120k por unidade considerando escala de +35% no CPL. Números e período são fixos no código, não parametrizáveis. formato='pdf' (padrão) ou 'html'.",
     { ...FORMATO_SCHEMA },
     async (args) => {
       const formato = (args.formato ?? args.format ?? "pdf") as "pdf" | "html";
