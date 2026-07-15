@@ -53,6 +53,8 @@ import { clientsConfigured, findClient, loadClients, clientContexto } from "./cl
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
 import { registerWriteTools } from "./server-tools/write-tools.js";
 import { registerGoogleWriteTools } from "./server-tools/google-write-tools.js";
+import { registerGoogleBusinessTools } from "./server-tools/google-business-tools.js";
+import { googleBusinessConfigured } from "./google-business-api.js";
 import { resolveNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
@@ -2347,6 +2349,12 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
     // Camada de escrita do Google Ads (criação/edição/exclusão) — Search apenas,
     // mesma trava de confirmação usada no Meta.
     registerGoogleWriteTools(server);
+  }
+
+  // Camada do Google Business Profile (avaliações + postagens) — token próprio
+  // (GOOGLE_BUSINESS_REFRESH_TOKEN), mesmo client OAuth do Google Ads.
+  if (googleBusinessConfigured()) {
+    registerGoogleBusinessTools(server);
   }
 
   // Camada de inteligência (diagnóstico + auditoria) — registrada à parte.

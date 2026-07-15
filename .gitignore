@@ -12,5 +12,6 @@ claude_desktop_config.json
 
 # scripts locais de OAuth/teste — contêm credenciais reais, nunca versionar
 get-refresh-token.mjs
+get-business-refresh-token.mjs
 report-batista.mjs
-test-gads.mjs
+test-*.mjs
