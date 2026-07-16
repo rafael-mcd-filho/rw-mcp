@@ -13,6 +13,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { MetaAdsClient } from "../meta-api.js";
+import { listMinioFiles, getMinioPresignedUrl } from "../minio-client.js";
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -422,21 +423,44 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   // ─── Mídia (upload — inerte, sem trava) ───────────────────────────────────────
   server.tool(
+    "list_minio_files",
+    "Lista os arquivos de criativo no bucket do MinIO configurado (env MINIO_BUCKET). Use `prefix` para entrar em uma \"pasta\" específica (ex: 'ClienteX/'). Devolve name/key/size/lastModified — o `key` é o que se passa em `minio_key` nas tools meta_create_image/meta_create_video.",
+    {
+      prefix: z
+        .string()
+        .optional()
+        .describe("Prefixo/subpasta dentro do bucket (ex: 'ClienteX/'). Vazio = raiz do bucket."),
+    },
+    async (args) => {
+      try {
+        const files = await listMinioFiles(args.prefix as string | undefined);
+        return json({ total: files.length, arquivos: files });
+      } catch (e) {
+        return toolError((e as Error).message);
+      }
+    }
+  );
+
+  server.tool(
     "meta_create_video",
-    "Envia um vídeo para a conta a partir de uma URL (a Meta baixa o arquivo). Retorna o video_id para usar no criativo (o thumbnail é resolvido automaticamente ao criar o criativo).",
+    "Envia um vídeo para a conta a partir de uma URL ou de um arquivo no MinIO (a Meta baixa o arquivo). Informe file_url OU minio_key (veja list_minio_files). Retorna o video_id para usar no criativo (o thumbnail é resolvido automaticamente ao criar o criativo).",
     {
       ...ACCOUNT_SCHEMA,
-      file_url: z.string().describe("URL pública do arquivo de vídeo (.mp4 etc)."),
+      file_url: z.string().optional().describe("URL pública do arquivo de vídeo (.mp4 etc). Alternativa a minio_key."),
+      minio_key: z.string().optional().describe("Key do objeto no bucket do MinIO (retornado por list_minio_files). Alternativa a file_url."),
       name: z.string().optional().describe("Nome interno do vídeo."),
       title: z.string().optional().describe("Título do vídeo."),
       description: z.string().optional().describe("Descrição do vídeo."),
     },
     async (args) => {
       try {
+        const minioKey = args.minio_key as string | undefined;
+        const fileUrl = minioKey ? await getMinioPresignedUrl(minioKey) : (args.file_url as string | undefined);
+        if (!fileUrl) return toolError("Informe file_url ou minio_key.");
         return json(
           await client.createVideo({
             accountId: accountIdFrom(args),
-            fileUrl: args.file_url as string,
+            fileUrl,
             name: args.name as string | undefined,
             title: args.title as string | undefined,
             description: args.description as string | undefined,
@@ -450,18 +474,22 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   server.tool(
     "meta_create_image",
-    "Envia uma imagem para a conta a partir de uma URL. Retorna o image_hash para usar em criativos (link_data.image_hash ou video_data.image_hash como thumbnail).",
+    "Envia uma imagem para a conta a partir de uma URL ou de um arquivo no MinIO. Informe url OU minio_key (veja list_minio_files). Retorna o image_hash para usar em criativos (link_data.image_hash ou video_data.image_hash como thumbnail).",
     {
       ...ACCOUNT_SCHEMA,
-      url: z.string().describe("URL pública da imagem (.jpg/.png/.webp)."),
+      url: z.string().optional().describe("URL pública da imagem (.jpg/.png/.webp). Alternativa a minio_key."),
+      minio_key: z.string().optional().describe("Key do objeto no bucket do MinIO (retornado por list_minio_files). Alternativa a url."),
       name: z.string().optional().describe("Nome interno da imagem."),
     },
     async (args) => {
       try {
+        const minioKey = args.minio_key as string | undefined;
+        const url = minioKey ? await getMinioPresignedUrl(minioKey) : (args.url as string | undefined);
+        if (!url) return toolError("Informe url ou minio_key.");
         return json(
           await client.createImage({
             accountId: accountIdFrom(args),
-            url: args.url as string,
+            url,
             name: args.name as string | undefined,
           })
         );

@@ -11,6 +11,8 @@
     "start:stdio": "node dist/src/stdio.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1088.0",
+    "@aws-sdk/s3-request-presigner": "^3.1088.0",
     "@modelcontextprotocol/sdk": "1.12.0",
     "@vercel/blob": "^0.27.0",
     "puppeteer-core": "^23.0.0",
