@@ -19,7 +19,16 @@ import {
   getBusinessDailyMetrics,
   getBusinessSearchKeywords,
   DAILY_METRICS,
+  listBusinessMedia,
+  createBusinessMedia,
+  deleteBusinessMedia,
+  MEDIA_CATEGORIES,
+  listBusinessServices,
+  setBusinessServices,
+  getBusinessServiceTypes,
+  type GBServiceItem,
 } from "../google-business-api.js";
+import { getMinioPresignedUrl } from "../minio-client.js";
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -86,6 +95,50 @@ function postIdFrom(a: Record<string, unknown>): string {
   return id;
 }
 
+function mediaIdFrom(a: Record<string, unknown>): string {
+  const raw = a["media_id"] ?? a["mediaId"];
+  if (raw == null) throw new Error("Parâmetro obrigatório: media_id.");
+  const id = String(raw).replace(/^.*\/media\//, "").trim();
+  if (!id) throw new Error("Parâmetro obrigatório: media_id.");
+  return id;
+}
+
+/** Normaliza pra "gcid:xxx" (formato usado por FreeFormServiceItem.category), aceitando também "categories/gcid:xxx". */
+function normalizeGcid(raw: string): string {
+  const stripped = raw.replace(/^categories\//, "");
+  return stripped.startsWith("gcid:") ? stripped : `gcid:${stripped}`;
+}
+
+function toMoney(value: number, currencyCode: string): { currencyCode: string; units: string; nanos: number } {
+  const units = Math.trunc(value);
+  const nanos = Math.round((value - units) * 1e9);
+  return { currencyCode, units: String(units), nanos };
+}
+
+function formatServiceItem(item: GBServiceItem) {
+  const preco = item.price
+    ? `${item.price.currencyCode ?? "BRL"} ${item.price.units ?? "0"},${String(Math.round((item.price.nanos ?? 0) / 1e7)).padStart(2, "0")}`
+    : null;
+  if (item.structuredServiceItem) {
+    return {
+      tipo: "estruturado" as const,
+      service_type_id: item.structuredServiceItem.serviceTypeId,
+      descricao: item.structuredServiceItem.description ?? null,
+      preco,
+    };
+  }
+  if (item.freeFormServiceItem) {
+    return {
+      tipo: "livre" as const,
+      nome: item.freeFormServiceItem.label?.displayName ?? null,
+      descricao: item.freeFormServiceItem.label?.description ?? null,
+      categoria: item.freeFormServiceItem.category ?? null,
+      preco,
+    };
+  }
+  return { tipo: "desconhecido" as const, raw: item };
+}
+
 const ACCOUNT_SCHEMA = {
   account_id: z.union([z.string(), z.number()]).describe("ID da conta Business Profile (ver list_google_business_accounts)."),
   accountId: z.union([z.string(), z.number()]).optional().describe("Alias de account_id."),
@@ -123,6 +176,17 @@ function formatReview(r: {
 
 const CALL_TO_ACTION_ENUM = z.enum(["BOOK", "ORDER", "SHOP", "LEARN_MORE", "SIGN_UP", "CALL"]);
 const TOPIC_TYPE_ENUM = z.enum(["STANDARD", "EVENT", "OFFER"]);
+const MEDIA_CATEGORY_ENUM = z.enum(MEDIA_CATEGORIES);
+const WEEKDAY_ENUM = z.enum(["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]);
+const SERVICE_ITEM_SCHEMA = z.object({
+  tipo: z.enum(["estruturado", "livre"]).describe("'estruturado' usa um service_type_id do Google (ver search_google_business_service_types). 'livre' usa nome e categoria definidos por você."),
+  service_type_id: z.string().optional().describe("Obrigatório se tipo=estruturado."),
+  nome: z.string().optional().describe("Obrigatório se tipo=livre. Ex: 'Corte infantil'."),
+  categoria: z.string().optional().describe("Obrigatório se tipo=livre. ID de categoria Google pra agrupar o serviço (ex: 'gcid:hair_salon' — geralmente a categoria primária do local)."),
+  descricao: z.string().max(300).optional().describe("Descrição opcional (até 300 caracteres)."),
+  preco: z.number().nonnegative().optional().describe("Preço em unidades da moeda (ex: 49.90). Omitido = sem preço divulgado."),
+  moeda: z.string().length(3).optional().describe("Código ISO 4217. Padrão BRL."),
+});
 
 function parseDateStr(label: string, s: string): { year: number; month: number; day: number } {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
@@ -364,6 +428,180 @@ export function registerGoogleBusinessTools(server: McpServer): void {
     }
   );
 
+  // ─── Fotos (mídia) ──────────────────────────────────────────────────────────
+
+  server.tool(
+    "list_google_business_photos",
+    "Lista as fotos/vídeos publicados no Perfil da Empresa no Google, com categoria e URLs.",
+    { ...LOCATION_SCHEMA },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+        const media = await listBusinessMedia(accountId, locationId);
+        return json(
+          media.map((m) => ({
+            media_id: m.name?.split("/").pop() ?? null,
+            categoria: m.locationAssociation?.category ?? null,
+            formato: m.mediaFormat ?? null,
+            url_google: m.googleUrl ?? null,
+            thumbnail: m.thumbnailUrl ?? null,
+            criado_em: m.createTime ?? null,
+          }))
+        );
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "upload_google_business_photo",
+    "Publica uma foto no Perfil da Empresa no Google, a partir de uma URL pública ou de um arquivo no MinIO. Informe source_url OU minio_key. category classifica o tipo de foto (COVER = capa, PROFILE = foto de perfil, LOGO, EXTERIOR, INTERIOR, PRODUCT, AT_WORK, FOOD_AND_DRINK, MENU, COMMON_AREA, ROOMS, TEAMS, ADDITIONAL = avulsa/padrão). AÇÃO PÚBLICA — exige confirm=true.",
+    {
+      ...LOCATION_SCHEMA,
+      source_url: z.string().url().optional().describe("URL pública da imagem. Alternativa a minio_key."),
+      minio_key: z.string().optional().describe("Key do objeto no bucket do MinIO (ver list_minio_files). Alternativa a source_url."),
+      category: MEDIA_CATEGORY_ENUM.optional().describe("Categoria da foto no perfil. Padrão: ADDITIONAL."),
+      ...CONFIRM_SCHEMA,
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+        const minioKey = a["minio_key"] as string | undefined;
+        const sourceUrl = minioKey ? await getMinioPresignedUrl(minioKey) : (a["source_url"] as string | undefined);
+        if (!sourceUrl) return toolError("Informe source_url ou minio_key.");
+        const category = (a["category"] as string | undefined) ?? "ADDITIONAL";
+
+        const guard = previewGuard(a, "publicar_foto", {
+          account_id: accountId,
+          location_id: locationId,
+          category,
+          origem: minioKey ? `minio:${minioKey}` : sourceUrl,
+        });
+        if (guard) return guard;
+
+        return json(await createBusinessMedia(accountId, locationId, sourceUrl, category));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "delete_google_business_photo",
+    "Remove uma foto/vídeo do Perfil da Empresa no Google. AÇÃO PÚBLICA/IRREVERSÍVEL — exige confirm=true.",
+    {
+      ...LOCATION_SCHEMA,
+      media_id: z.string().describe("ID da foto (ver list_google_business_photos)."),
+      mediaId: z.string().optional().describe("Alias de media_id."),
+      ...CONFIRM_SCHEMA,
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+        const mediaId = mediaIdFrom(a);
+
+        const guard = previewGuard(a, "deletar_foto", { account_id: accountId, location_id: locationId, media_id: mediaId });
+        if (guard) return guard;
+
+        await deleteBusinessMedia(accountId, locationId, mediaId);
+        return json({ status: "ok", media_id: mediaId });
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  // ─── Serviços ───────────────────────────────────────────────────────────────
+
+  server.tool(
+    "search_google_business_service_types",
+    "Lista os tipos de serviço estruturados (service_type_id) que o Google reconhece pra uma categoria de negócio — usar antes de update_google_business_services pra montar itens do tipo 'estruturado'. Categorias sem tipos pré-definidos só suportam serviços em texto livre (tipo=livre).",
+    {
+      category_id: z.string().describe("ID da categoria, formato 'categories/gcid:xxx' (ver search_google_business_categories). Geralmente a categoria primária do local."),
+      region_code: z.string().optional().describe("Padrão BR."),
+      language_code: z.string().optional().describe("Padrão pt."),
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const categoryId = String(a["category_id"] ?? "").trim();
+        if (!categoryId) return toolError("Parâmetro obrigatório: category_id.");
+        const region = (a["region_code"] as string | undefined) ?? "BR";
+        const lang = (a["language_code"] as string | undefined) ?? "pt";
+        return json(await getBusinessServiceTypes(categoryId, region, lang));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "list_google_business_services",
+    "Lista os serviços cadastrados no Perfil da Empresa no Google (estruturados ou em texto livre), com preço quando houver.",
+    { ...LOCATION_SCHEMA },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const locationId = locationIdFrom(a);
+        const items = await listBusinessServices(locationId);
+        return json(items.map(formatServiceItem));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
+  server.tool(
+    "update_google_business_services",
+    "Define a lista de serviços do Perfil da Empresa no Google. IMPORTANTE: SUBSTITUI a lista inteira de serviços (não soma) — confira os atuais em list_google_business_services antes se quiser preservar algum. Pra tipo=estruturado, descubra o service_type_id em search_google_business_service_types; pra tipo=livre, informe nome e categoria livremente. AÇÃO PÚBLICA — exige confirm=true.",
+    {
+      ...LOCATION_SCHEMA,
+      services: z.array(SERVICE_ITEM_SCHEMA).min(1).describe("Lista completa de serviços a publicar (substitui a atual)."),
+      ...CONFIRM_SCHEMA,
+    },
+    async (args) => {
+      try {
+        const a = args as Record<string, unknown>;
+        const accountId = accountIdFrom(a);
+        const locationId = locationIdFrom(a);
+        const services = a["services"] as z.infer<typeof SERVICE_ITEM_SCHEMA>[];
+
+        const serviceItems: GBServiceItem[] = services.map((s, i) => {
+          const price = s.preco != null ? toMoney(s.preco, s.moeda ?? "BRL") : undefined;
+          if (s.tipo === "estruturado") {
+            if (!s.service_type_id) throw new Error(`services[${i}]: service_type_id é obrigatório quando tipo=estruturado.`);
+            return {
+              ...(price ? { price } : {}),
+              structuredServiceItem: { serviceTypeId: s.service_type_id, ...(s.descricao ? { description: s.descricao } : {}) },
+            };
+          }
+          if (!s.nome || !s.categoria) throw new Error(`services[${i}]: nome e categoria são obrigatórios quando tipo=livre.`);
+          return {
+            ...(price ? { price } : {}),
+            freeFormServiceItem: {
+              category: normalizeGcid(s.categoria),
+              label: { displayName: s.nome, languageCode: "pt-BR", ...(s.descricao ? { description: s.descricao } : {}) },
+            },
+          };
+        });
+
+        const guard = previewGuard(a, "atualizar_servicos", { account_id: accountId, location_id: locationId, service_items: serviceItems });
+        if (guard) return guard;
+
+        return json(await setBusinessServices(locationId, serviceItems));
+      } catch (e) {
+        return toolError(String(e instanceof Error ? e.message : e));
+      }
+    }
+  );
+
   // ─── Performance + diagnóstico ─────────────────────────────────────────────
 
   server.tool(
@@ -423,7 +661,7 @@ export function registerGoogleBusinessTools(server: McpServer): void {
 
   server.tool(
     "update_google_business_profile",
-    "Atualiza descrição e/ou categorias adicionais de um Perfil da Empresa no Google. IMPORTANTE: additional_category_ids SUBSTITUI a lista inteira de categorias adicionais (não soma) — confira as atuais em get_google_business_profile_health antes de chamar se quiser preservar alguma. Use search_google_business_categories pra achar os IDs. AÇÃO PÚBLICA — exige confirm=true.",
+    "Atualiza dados de um Perfil da Empresa no Google: descrição, categorias adicionais, nome do negócio, telefone, site, endereço e horário de funcionamento. IMPORTANTE: additional_category_ids, address e regular_hours SUBSTITUEM o campo inteiro (não fazem merge parcial) — confira o estado atual em get_google_business_profile_health/list_google_business_locations antes se quiser preservar algo. phone_primary/phone_additional preservam automaticamente o telefone que não for informado. Mudar title tem escrutínio maior do Google (precisa bater com o nome real do estabelecimento) e pode disparar revisão. AÇÃO PÚBLICA — exige confirm=true.",
     {
       ...LOCATION_SCHEMA,
       description: z.string().max(750).optional().describe("Nova descrição do perfil (até 750 caracteres). Evite URLs, telefone ou linguagem promocional — o Google rejeita/oculta descrições assim."),
@@ -431,6 +669,32 @@ export function registerGoogleBusinessTools(server: McpServer): void {
         .array(z.string())
         .optional()
         .describe("Lista de categorias adicionais, formato 'categories/gcid:xxx' (ver search_google_business_categories). Substitui a lista atual inteira."),
+      title: z.string().optional().describe("Novo nome do negócio. Use com cautela — precisa bater com o nome real do estabelecimento."),
+      phone_primary: z.string().optional().describe("Telefone principal, formato internacional (ex: +55 83 99999-9999)."),
+      phone_additional: z.array(z.string()).max(2).optional().describe("Até 2 telefones adicionais. Se omitido enquanto phone_primary é enviado, mantém os adicionais já cadastrados (e vice-versa)."),
+      website_uri: z.string().url().optional().describe("URL do site."),
+      address: z
+        .object({
+          address_lines: z.array(z.string()).min(1).describe("Linhas do endereço (rua/número, complemento)."),
+          locality: z.string().optional().describe("Cidade."),
+          sublocality: z.string().optional().describe("Bairro."),
+          administrative_area: z.string().optional().describe("Estado (UF)."),
+          postal_code: z.string().optional().describe("CEP."),
+          region_code: z.string().optional().describe("Padrão BR."),
+        })
+        .optional()
+        .describe("Endereço completo — SUBSTITUI o endereço inteiro."),
+      regular_hours: z
+        .array(
+          z.object({
+            open_day: WEEKDAY_ENUM,
+            open_time: z.string().describe("HH:MM (24h)."),
+            close_day: WEEKDAY_ENUM.optional().describe("Padrão: igual a open_day (período não cruza pra outro dia)."),
+            close_time: z.string().describe("HH:MM (24h)."),
+          })
+        )
+        .optional()
+        .describe("Horário de funcionamento — SUBSTITUI a semana inteira. Um item por período contínuo (ex: pausa pro almoço = 2 períodos no mesmo dia)."),
       ...CONFIRM_SCHEMA,
     },
     async (args) => {
@@ -440,13 +704,31 @@ export function registerGoogleBusinessTools(server: McpServer): void {
         const locationId = locationIdFrom(a);
         const description = a["description"] as string | undefined;
         const additionalIds = a["additional_category_ids"] as string[] | undefined;
+        const title = a["title"] as string | undefined;
+        const phonePrimary = a["phone_primary"] as string | undefined;
+        const phoneAdditional = a["phone_additional"] as string[] | undefined;
+        const websiteUri = a["website_uri"] as string | undefined;
+        const address = a["address"] as
+          | { address_lines: string[]; locality?: string; sublocality?: string; administrative_area?: string; postal_code?: string; region_code?: string }
+          | undefined;
+        const regularHours = a["regular_hours"] as
+          | { open_day: string; open_time: string; close_day?: string; close_time: string }[]
+          | undefined;
 
-        if (!description && !additionalIds) {
-          return toolError("Informe ao menos um de: description, additional_category_ids.");
+        if (!description && !additionalIds && !title && !phonePrimary && !phoneAdditional && !websiteUri && !address && !regularHours) {
+          return toolError(
+            "Informe ao menos um de: description, additional_category_ids, title, phone_primary, phone_additional, website_uri, address, regular_hours."
+          );
         }
 
         const patch: Record<string, unknown> = {};
         const mask: string[] = [];
+
+        // Categorias e telefone parcial precisam do estado atual pra não perder dado — 1 leitura só, reaproveitada.
+        let current: Awaited<ReturnType<typeof getBusinessLocationDetail>> | undefined;
+        if (additionalIds || (phonePrimary && !phoneAdditional) || (phoneAdditional && !phonePrimary)) {
+          current = await getBusinessLocationDetail(locationId);
+        }
 
         if (description) {
           patch.profile = { description };
@@ -454,14 +736,57 @@ export function registerGoogleBusinessTools(server: McpServer): void {
         }
 
         if (additionalIds) {
-          const current = await getBusinessLocationDetail(locationId);
-          const primary = current.categories?.primaryCategory;
+          const primary = current?.categories?.primaryCategory;
           if (!primary) return toolError("Não foi possível ler a categoria primária atual — aplique manualmente pra não perdê-la.");
           patch.categories = {
             primaryCategory: { name: primary.name },
             additionalCategories: additionalIds.map((id) => ({ name: id.startsWith("categories/") ? id : `categories/${id}` })),
           };
           mask.push("categories");
+        }
+
+        if (title) {
+          patch.title = title;
+          mask.push("title");
+        }
+
+        if (phonePrimary || phoneAdditional) {
+          const primaryPhone = phonePrimary ?? current?.phoneNumbers?.primaryPhone;
+          if (!primaryPhone) {
+            return toolError("phone_primary é obrigatório (não havia telefone principal já cadastrado pra preservar).");
+          }
+          const additionalPhones = phoneAdditional ?? current?.phoneNumbers?.additionalPhones;
+          patch.phoneNumbers = { primaryPhone, ...(additionalPhones?.length ? { additionalPhones } : {}) };
+          mask.push("phoneNumbers");
+        }
+
+        if (websiteUri) {
+          patch.websiteUri = websiteUri;
+          mask.push("websiteUri");
+        }
+
+        if (address) {
+          patch.storefrontAddress = {
+            addressLines: address.address_lines,
+            regionCode: address.region_code ?? "BR",
+            ...(address.locality ? { locality: address.locality } : {}),
+            ...(address.sublocality ? { sublocality: address.sublocality } : {}),
+            ...(address.administrative_area ? { administrativeArea: address.administrative_area } : {}),
+            ...(address.postal_code ? { postalCode: address.postal_code } : {}),
+          };
+          mask.push("storefrontAddress");
+        }
+
+        if (regularHours) {
+          patch.regularHours = {
+            periods: regularHours.map((p) => ({
+              openDay: p.open_day,
+              openTime: parseTimeStr("regular_hours.open_time", p.open_time),
+              closeDay: p.close_day ?? p.open_day,
+              closeTime: parseTimeStr("regular_hours.close_time", p.close_time),
+            })),
+          };
+          mask.push("regularHours");
         }
 
         const guard = previewGuard(a, "atualizar_perfil", { account_id: accountId, location_id: locationId, ...patch });

@@ -101,11 +101,38 @@ export async function listBusinessAccounts(): Promise<GBAccount[]> {
   return out;
 }
 
+export interface GBPhoneNumbers {
+  primaryPhone?: string;
+  additionalPhones?: string[];
+}
+
+export interface GBPostalAddress {
+  regionCode?: string;
+  languageCode?: string;
+  postalCode?: string;
+  administrativeArea?: string;
+  locality?: string;
+  sublocality?: string;
+  addressLines?: string[];
+}
+
+export interface GBTimeOfDay {
+  hours: number;
+  minutes: number;
+}
+
+export interface GBTimePeriod {
+  openDay: string;
+  openTime: GBTimeOfDay;
+  closeDay: string;
+  closeTime: GBTimeOfDay;
+}
+
 export interface GBLocation {
   name: string; // "locations/{locationId}"
   title?: string;
-  storefrontAddress?: Record<string, unknown>;
-  phoneNumbers?: Record<string, unknown>;
+  storefrontAddress?: GBPostalAddress;
+  phoneNumbers?: GBPhoneNumbers;
   websiteUri?: string;
   metadata?: { hasVoiceOfMerchant?: boolean; [key: string]: unknown };
 }
@@ -133,10 +160,11 @@ export interface GBCategory {
 
 export interface GBLocationDetail extends GBLocation {
   categories?: { primaryCategory?: GBCategory; additionalCategories?: GBCategory[] };
-  regularHours?: { periods?: unknown[] };
+  regularHours?: { periods?: GBTimePeriod[] };
   profile?: { description?: string };
   openInfo?: { status?: string };
   labels?: string[];
+  serviceItems?: GBServiceItem[];
 }
 
 const LOCATION_DETAIL_READ_MASK =
@@ -186,6 +214,61 @@ export async function updateBusinessLocation(
     method: "PATCH",
     body: JSON.stringify(patch),
   });
+}
+
+// ─── Serviços (Business Information v1) ─────────────────────────────────────
+// Location.serviceItems: cada item é OU structuredServiceItem (serviceTypeId
+// fornecido pelo Google, descoberto via categories:batchGet?view=FULL) OU
+// freeFormServiceItem (category + label livres), com price (Money) opcional
+// em ambos os casos. Esquema confirmado contra o discovery document oficial
+// (mybusinessbusinessinformation $discovery) em 2026-07-21.
+
+export interface GBMoney {
+  currencyCode?: string;
+  units?: string; // int64 como string, conforme JSON mapping padrão do protobuf
+  nanos?: number;
+}
+
+export interface GBServiceItem {
+  price?: GBMoney;
+  structuredServiceItem?: { serviceTypeId: string; description?: string };
+  freeFormServiceItem?: {
+    category: string; // formato "gcid:xxx"
+    label: { displayName: string; description?: string; languageCode?: string };
+  };
+}
+
+export async function listBusinessServices(locationId: string): Promise<GBServiceItem[]> {
+  const url = new URL(`${BUSINESS_INFO_BASE}/locations/${locationId}`);
+  url.searchParams.set("readMask", "serviceItems");
+  const data = await apiFetch<{ serviceItems?: GBServiceItem[] }>(url.toString());
+  return data.serviceItems ?? [];
+}
+
+/** Substitui a lista inteira de serviços (mesma semântica de full-replace de updateBusinessLocation/categories). */
+export async function setBusinessServices(locationId: string, serviceItems: GBServiceItem[]): Promise<GBLocationDetail> {
+  return updateBusinessLocation(locationId, { serviceItems }, ["serviceItems"]);
+}
+
+export interface GBServiceType {
+  serviceTypeId: string;
+  displayName?: string;
+}
+
+/** Descobre os serviceTypeId estruturados que o Google reconhece pra uma categoria (necessário antes de usar structuredServiceItem). */
+export async function getBusinessServiceTypes(
+  categoryName: string,
+  regionCode = "BR",
+  languageCode = "pt"
+): Promise<GBServiceType[]> {
+  const url = new URL(`${BUSINESS_INFO_BASE}/categories:batchGet`);
+  const name = categoryName.startsWith("categories/") ? categoryName : `categories/${categoryName}`;
+  url.searchParams.append("names", name);
+  url.searchParams.set("regionCode", regionCode);
+  url.searchParams.set("languageCode", languageCode);
+  url.searchParams.set("view", "FULL");
+  const data = await apiFetch<{ categories?: { name: string; serviceTypes?: GBServiceType[] }[] }>(url.toString());
+  return data.categories?.[0]?.serviceTypes ?? [];
 }
 
 // ─── Reviews (mybusiness v4) ─────────────────────────────────────────────────
@@ -295,6 +378,69 @@ export async function deleteBusinessLocalPost(
     `${MYBUSINESS_V4_BASE}/accounts/${accountId}/locations/${locationId}/localPosts/${postId}`,
     { method: "DELETE" }
   );
+}
+
+// ─── Mídia / Fotos (mybusiness v4) ───────────────────────────────────────────
+// Mesma API legada v4 usada por reviews/posts — não tem equivalente na suíte
+// nova. Só suporta criação via sourceUrl (Google busca a imagem na hora);
+// upload direto de bytes exigiria sessão resumível separada, não implementado.
+
+export const MEDIA_CATEGORIES = [
+  "COVER",
+  "PROFILE",
+  "LOGO",
+  "EXTERIOR",
+  "INTERIOR",
+  "PRODUCT",
+  "AT_WORK",
+  "FOOD_AND_DRINK",
+  "MENU",
+  "COMMON_AREA",
+  "ROOMS",
+  "TEAMS",
+  "ADDITIONAL",
+] as const;
+
+export interface GBMediaItem {
+  name?: string; // "accounts/{a}/locations/{l}/media/{mediaKey}"
+  mediaFormat?: string; // PHOTO | VIDEO
+  locationAssociation?: { category?: string };
+  sourceUrl?: string;
+  googleUrl?: string;
+  thumbnailUrl?: string;
+  createTime?: string;
+  dimensions?: { widthPixels?: number; heightPixels?: number };
+}
+
+export async function listBusinessMedia(accountId: string, locationId: string): Promise<GBMediaItem[]> {
+  const out: GBMediaItem[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = new URL(`${MYBUSINESS_V4_BASE}/accounts/${accountId}/locations/${locationId}/media`);
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const data = await apiFetch<{ mediaItems?: GBMediaItem[]; nextPageToken?: string }>(url.toString());
+    out.push(...(data.mediaItems ?? []));
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+  return out;
+}
+
+export async function createBusinessMedia(
+  accountId: string,
+  locationId: string,
+  sourceUrl: string,
+  category: string
+): Promise<GBMediaItem> {
+  return apiFetch(`${MYBUSINESS_V4_BASE}/accounts/${accountId}/locations/${locationId}/media`, {
+    method: "POST",
+    body: JSON.stringify({ mediaFormat: "PHOTO", locationAssociation: { category }, sourceUrl }),
+  });
+}
+
+export async function deleteBusinessMedia(accountId: string, locationId: string, mediaKey: string): Promise<void> {
+  await apiFetch(`${MYBUSINESS_V4_BASE}/accounts/${accountId}/locations/${locationId}/media/${mediaKey}`, {
+    method: "DELETE",
+  });
 }
 
 // ─── Performance (businessprofileperformance v1) ────────────────────────────
