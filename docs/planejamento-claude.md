@@ -1,8 +1,8 @@
 # Planejamento Claude — Upgrade de inteligência do rw-mcp (versão final)
 
 > Plano definitivo, consolidado depois de três rodadas de análise da pasta
-> `ratos`, do `planjemento-codex.md` e das restrições reais do gestor.
-> Documento-irmão do `planjemento-codex.md` — os dois convergem; este é o que
+> `ratos`, do `planejamento-codex.md` e das restrições reais do gestor.
+> Documento-irmão do `planejamento-codex.md` — os dois convergem; este é o que
 > guia a implementação.
 
 Data: 2026-06-19.
