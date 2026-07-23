@@ -100,12 +100,10 @@ Liga conjunto + criativo. Nada especial além do padrão (PAUSED na criação).
 }
 ```
 
-### Pendências a confirmar (pós-deploy)
-- `destination_type = INSTAGRAM_PROFILE` está confirmado pela documentação oficial
-  da Meta + pelo CTA `VIEW_INSTAGRAM_PROFILE` do criativo da GBella, mas **ainda não
-  foi lido empiricamente** do conjunto real (a leitura `meta_list_adsets` só passou a
-  trazer `destination_type` num fix ainda não publicado). Reconfirmar lendo o conjunto
-  `52568172022963` depois do deploy.
+### Confirmação empírica
+- ✅ `destination_type = INSTAGRAM_PROFILE` **confirmado lendo o conjunto real**
+  `52568172022963` (GBella) via `meta_list_adsets` pós-deploy (2026-07-22). Bate com a
+  documentação oficial da Meta e com o CTA `VIEW_INSTAGRAM_PROFILE` do criativo.
 
 ---
 
