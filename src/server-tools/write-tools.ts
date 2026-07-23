@@ -212,14 +212,14 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   server.tool(
     "meta_create_adset",
-    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE. Para vários conjuntos parecidos, prefira meta_create_adsets_batch.",
+    "Cria um conjunto de anúncios (sempre PAUSED). bid_strategy default LOWEST_COST_WITHOUT_CAP. Se instagram_positions tiver explore_home, 'explore' é adicionado automaticamente. Para conversão no site passe promoted_object={pixel_id, custom_event_type} e destination_type=WEBSITE. Para campanha de tráfego/visitas ao perfil (crescimento de seguidores, 'Instagram ou Facebook' no Gerenciador), use optimization_goal=PROFILE_VISIT e destination_type=INSTAGRAM_PROFILE — NUNCA destination_type=WEBSITE nesse caso, senão a Meta assume 'Site' como local da conversão e o conjunto sai com a conversão errada (sem promoted_object de pixel). Para vários conjuntos parecidos, prefira meta_create_adsets_batch.",
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do conjunto."),
       campaign_id: z.string().describe("ID da campanha mãe."),
       optimization_goal: z
         .string()
-        .describe("Ex: OFFSITE_CONVERSIONS, LINK_CLICKS, LEAD_GENERATION, REACH, IMPRESSIONS."),
+        .describe("Ex: OFFSITE_CONVERSIONS, LINK_CLICKS, LEAD_GENERATION, REACH, IMPRESSIONS, PROFILE_VISIT (visitas ao perfil), CONVERSATIONS (WhatsApp/Direct)."),
       billing_event: z.string().optional().describe("Padrão IMPRESSIONS."),
       bid_strategy: z.string().optional().describe("Padrão LOWEST_COST_WITHOUT_CAP."),
       daily_budget: z.number().optional().describe("Orçamento diário em CENTAVOS (ABO). Omita se a campanha for CBO."),
@@ -229,12 +229,19 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       promoted_object: z
         .record(z.unknown())
         .optional()
-        .describe("Ex: {pixel_id, custom_event_type:'LEAD'} para conversão no site."),
-      destination_type: z.string().optional().describe("Ex: WEBSITE, MESSENGER, WHATSAPP."),
+        .describe("Ex: {pixel_id, custom_event_type:'LEAD'} para conversão no site. NÃO usar para PROFILE_VISIT (perfil não precisa de promoted_object)."),
+      destination_type: z
+        .string()
+        .optional()
+        .describe("Ex: WEBSITE, MESSENGER, WHATSAPP, INSTAGRAM_PROFILE. Use INSTAGRAM_PROFILE (não WEBSITE) sempre que optimization_goal=PROFILE_VISIT."),
       attribution_spec: z
         .array(z.record(z.unknown()))
         .optional()
         .describe("Ex: [{event_type:'CLICK_THROUGH',window_days:7},{event_type:'VIEW_THROUGH',window_days:1}]."),
+      frequency_control_specs: z
+        .array(z.record(z.unknown()))
+        .optional()
+        .describe("Controle de frequência (campanhas de Alcance/OUTCOME_AWARENESS). Formato: [{event:'IMPRESSIONS', interval_days:N, max_frequency:M, type:'CAP'|'TARGET'}]. type='CAP' = 'Limite' (máximo M vezes a cada N dias); type='TARGET' = 'Alvo' (frequência média desejada). Ex.: [{event:'IMPRESSIONS',interval_days:7,max_frequency:2,type:'CAP'}]."),
       start_time: z.string().optional().describe("Início (ISO). Omita para começar imediato."),
       end_time: z.string().optional().describe("Fim (ISO). Obrigatório com lifetime_budget."),
       status: STATUS_ENUM.optional().describe("Padrão PAUSED."),
@@ -250,7 +257,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
 
   server.tool(
     "meta_create_creative",
-    "Cria um criativo. Para vídeo, se o video_data não tiver image_hash/image_url, o thumbnail é buscado automaticamente do vídeo. O display link fica em call_to_action.value.link_caption. ATENÇÃO: object_story_spec + asset_feed_spec juntos (ex: WhatsApp addon) pode falhar com erro 3 se o app não tiver capability de Marketing Partner.",
+    "Cria um criativo. Para vídeo, se o video_data não tiver image_hash/image_url, o thumbnail é buscado automaticamente do vídeo. O display link fica em call_to_action.value.link_caption. ATENÇÃO: o 'Complementos para navegador → WhatsApp' (botão de WhatsApp no anúncio de site) é asset_feed_spec.message_extensions=[{type:'whatsapp'}], mas criar com ele dá erro #3 'Application does not have the capability' — é capability de Marketing Partner que o app não tem; hoje só dá pra ligar esse add-on pelo Gerenciador.",
     {
       ...ACCOUNT_SCHEMA,
       name: z.string().describe("Nome do criativo."),
@@ -275,7 +282,15 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       degrees_of_freedom_spec: z
         .record(z.unknown())
         .optional()
-        .describe("Liga/desliga Advantage+ creative features (OPT_OUT para desativar)."),
+        .describe("Controle fino por feature de creative_features_spec (ex.: {creative_features_spec:{audio:{enroll_status:'OPT_OUT'}}}). Chaves reais de música = 'audio' e 'music_generation'. Normalmente use disable_creative_enhancements=true em vez deste; se passar os dois, este tem precedência por feature."),
+      disable_creative_enhancements: z
+        .boolean()
+        .optional()
+        .describe("true = desativa TODOS os aprimoramentos de criativo Advantage+/essenciais (equivale a '(0/N) Desativados' no Gerenciador; inclui música, banners e retoques). Padrão da operação para não deixar a Meta alterar o criativo."),
+      multi_advertiser_ads: z
+        .boolean()
+        .optional()
+        .describe("'Anúncios com vários anunciantes' (contextual_multi_ads): true=OPT_IN, false=OPT_OUT. Se omitido, a Meta auto-inscreve (OPT_IN) todo criativo desde ago/2024 — passe false explicitamente para deixar desativado."),
     },
     async (args) => {
       try {
@@ -290,6 +305,8 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
             instagramUserId: args.instagram_user_id as string | undefined,
             urlTags: args.url_tags as string | undefined,
             degreesOfFreedomSpec: args.degrees_of_freedom_spec as Record<string, unknown> | undefined,
+            multiAdvertiserAds: args.multi_advertiser_ads as boolean | undefined,
+            disableCreativeEnhancements: args.disable_creative_enhancements as boolean | undefined,
           })
         );
       } catch (e) {
@@ -339,7 +356,7 @@ export function registerWriteTools(server: McpServer, client: MetaAdsClient): vo
       base: z
         .record(z.unknown())
         .describe(
-          "Campos compartilhados por todos os conjuntos: optimization_goal, billing_event, bid_strategy, daily_budget (centavos), targeting (base), promoted_object, destination_type, attribution_spec, status."
+          "Campos compartilhados por todos os conjuntos: optimization_goal, billing_event, bid_strategy, daily_budget (centavos), targeting (base), promoted_object, destination_type, attribution_spec, frequency_control_specs, status."
         ),
       variations: z
         .array(z.record(z.unknown()))
@@ -846,6 +863,7 @@ function adsetParamsFrom(a: Record<string, unknown>, accountId?: string) {
     promotedObject: a["promoted_object"] as Record<string, unknown> | undefined,
     destinationType: a["destination_type"] as string | undefined,
     attributionSpec: a["attribution_spec"] as unknown[] | undefined,
+    frequencyControlSpecs: a["frequency_control_specs"] as unknown[] | undefined,
     startTime: a["start_time"] as string | undefined,
     endTime: a["end_time"] as string | undefined,
     status: a["status"] as string | undefined,

@@ -845,6 +845,20 @@ export function createMcpServer(
   );
 
   server.tool(
+    "meta_get_object",
+    "GET genérico e SÓ LEITURA de qualquer objeto do Graph API pelo ID (anúncio, post, página, conjunto, criativo, etc.) com os campos que você pedir. Use para inspecionar campos que as tools tipadas não expõem — ex.: ler um ad inteiro, ou o post por trás de effective_object_story_id. Para edges com lista, peça o edge dentro de fields (ex.: 'name,ads{name,creative}').",
+    {
+      id: z.string().describe("ID do objeto (ad, post, page, adset, creative, etc.)."),
+      fields: z
+        .string()
+        .optional()
+        .describe("Lista de campos separada por vírgula (ex.: 'name,creative{object_story_spec}'). Omita para os campos padrão do objeto."),
+    },
+    async (args) =>
+      json(await client.getObject(args.id as string, args.fields as string | undefined))
+  );
+
+  server.tool(
     "meta_get_preview",
     "Gera o preview (HTML em iframe) de um criativo num posicionamento, para validar como o anúncio aparece ANTES de ativar. ad_format='all' retorna os principais formatos do Instagram.",
     {

@@ -5,6 +5,46 @@ function normalizeAccountId(id: string): string {
   return id.startsWith("act_") ? id : `act_${id}`;
 }
 
+/**
+ * Chaves de creative_features_spec (aprimoramentos de criativo Advantage+/essenciais).
+ * Lista observada empiricamente de um criativo real com TODAS desativadas
+ * (Beco Mágico JP, criativo 1676264416788823, jul/2026). Passar disableCreativeEnhancements=true
+ * em createAdCreative injeta todas em OPT_OUT — equivale a "Aprimoramentos (0/N) Desativados"
+ * no Gerenciador (inclui `audio` e `music_generation` = "Adicionar música", e
+ * `image_banner`/`profile_card` = banner no perfil). É um snapshot; se a Meta adicionar
+ * features novas, refazer lendo um criativo via meta_get_creative fields=degrees_of_freedom_spec.
+ */
+const CREATIVE_FEATURE_KEYS = [
+  "adapt_to_placement", "add_text_overlay", "ads_with_benefits", "advantage_plus_creative",
+  "app_highlights", "audio", "auto_promotion_tag", "biz_ai", "carousel_to_video",
+  "catalog_feed_tag", "creative_stickers", "customize_product_recommendation",
+  "cv_transformation", "description_automation", "dha_optimization", "dynamic_cta_text",
+  "dynamic_partner_content", "enable_ncs_testimonials", "enhance_cta", "fb_feed_tag",
+  "fb_reels_tag", "fb_story_tag", "feed_caption_optimization", "generate_cta", "hide_price",
+  "hyperlink_formatting", "ig_feed_tag", "ig_glados_feed", "ig_reels_tag", "ig_stream_tag",
+  "ig_video_native_subtitle", "image_animation", "image_auto_crop", "image_background_gen",
+  "image_banner", "image_brightness_and_contrast", "image_end_card", "image_enhancement",
+  "image_templates", "image_text_translation", "image_touchups", "image_uncrop",
+  "inline_comment", "local_store_extension", "media_liquidity_animated_image", "media_order",
+  "media_type_automation", "multi_creative_post_carousel", "multi_photo_to_video",
+  "music_generation", "pac_genai_recomposition", "pac_recomposition", "pac_relaxation",
+  "product_browsing", "product_extensions", "product_metadata_automation", "product_tags",
+  "profile_card", "profile_extension", "replace_media_text", "reveal_details_over_time",
+  "show_destination_blurbs", "show_summary", "site_extensions", "standard_enhancements_catalog",
+  "text_extraction_for_headline", "text_extraction_for_tap_target", "text_formatting_optimization",
+  "text_generation", "text_optimizations", "text_overlay_translation", "text_translation",
+  "translate_voiceover", "video_auto_crop", "video_filtering", "video_highlight",
+  "video_highlights", "video_to_image", "video_uncrop", "video_uncrop_9x16_to_9x18",
+  "wa_mm_image_filtering", "wa_mm_text_truncation_length",
+] as const;
+
+/** Monta creative_features_spec com todas as features em OPT_OUT. */
+function allCreativeFeaturesOptOut(): Record<string, { enroll_status: string }> {
+  return Object.fromEntries(
+    CREATIVE_FEATURE_KEYS.map((k) => [k, { enroll_status: "OPT_OUT" }])
+  );
+}
+
 export const INSIGHTS_FIELDS =
   [
     "campaign_id",
@@ -86,6 +126,12 @@ export interface AdSet {
   lifetime_budget?: string;
   optimization_goal?: string;
   billing_event?: string;
+  bid_strategy?: string;
+  bid_amount?: string;
+  destination_type?: string;
+  promoted_object?: Record<string, unknown>;
+  attribution_spec?: Record<string, unknown>[];
+  frequency_control_specs?: Record<string, unknown>[];
   targeting?: Record<string, unknown>;
   start_time?: string;
   end_time?: string;
@@ -327,6 +373,18 @@ export class MetaAdsClient {
     return this.fetchJson<T>(this.buildUrl(endpoint, params));
   }
 
+  /**
+   * GET genérico e read-only de QUALQUER objeto do Graph (ad, post, page, adset,
+   * criativo, etc.) com os campos que você pedir. Útil para inspecionar/depurar
+   * campos que as tools tipadas não expõem (ex.: engenharia reversa de features).
+   * Não faz paging — para edges com lista, peça o edge no fields (ex.: "ads{name}").
+   */
+  async getObject(id: string, fields?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, string> = {};
+    if (fields) params["fields"] = fields;
+    return this.request<Record<string, unknown>>(id, params);
+  }
+
   /** Igual a request, mas segue paging.next e concatena todas as páginas. */
   private async requestPaged<T>(
     endpoint: string,
@@ -471,7 +529,7 @@ export class MetaAdsClient {
     accountId?: string
   ): Promise<AdSet[]> {
     const fields =
-      "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event,targeting,start_time,end_time";
+      "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event,bid_strategy,bid_amount,destination_type,promoted_object,attribution_spec,frequency_control_specs,targeting,start_time,end_time";
     const params: Record<string, string> = { fields };
     if (status) params["effective_status"] = `["${status}"]`;
 
@@ -879,6 +937,7 @@ export class MetaAdsClient {
     promotedObject?: Record<string, unknown>;
     destinationType?: string;
     attributionSpec?: unknown[];
+    frequencyControlSpecs?: unknown[];
     budgetSchedules?: unknown[];
     startTime?: string;
     endTime?: string;
@@ -901,6 +960,7 @@ export class MetaAdsClient {
     if (p.promotedObject) body["promoted_object"] = p.promotedObject;
     if (p.destinationType) body["destination_type"] = p.destinationType;
     if (p.attributionSpec) body["attribution_spec"] = p.attributionSpec;
+    if (p.frequencyControlSpecs) body["frequency_control_specs"] = p.frequencyControlSpecs;
     if (p.budgetSchedules) body["budget_schedules"] = p.budgetSchedules;
     if (p.startTime) body["start_time"] = p.startTime;
     if (p.endTime) body["end_time"] = p.endTime;
@@ -918,6 +978,8 @@ export class MetaAdsClient {
     instagramUserId?: string;
     urlTags?: string;
     degreesOfFreedomSpec?: Record<string, unknown>;
+    multiAdvertiserAds?: boolean;
+    disableCreativeEnhancements?: boolean;
   }): Promise<{ id: string }> {
     const acct = this.resolveAccount(p.accountId);
     const body: Record<string, unknown> = { name: p.name };
@@ -935,7 +997,27 @@ export class MetaAdsClient {
     if (p.assetFeedSpec) body["asset_feed_spec"] = p.assetFeedSpec;
     if (p.instagramUserId) body["instagram_user_id"] = p.instagramUserId;
     if (p.urlTags) body["url_tags"] = p.urlTags;
-    if (p.degreesOfFreedomSpec) body["degrees_of_freedom_spec"] = p.degreesOfFreedomSpec;
+    // Aprimoramentos de criativo (Advantage+/essenciais). disableCreativeEnhancements
+    // injeta TODAS as features em OPT_OUT (inclui "Adicionar música" = audio/music_generation).
+    // Se degrees_of_freedom_spec explícito também vier, ele tem precedência por feature
+    // (permite reativar alguma individualmente sobre a base "tudo off").
+    if (p.disableCreativeEnhancements || p.degreesOfFreedomSpec) {
+      const base = p.disableCreativeEnhancements ? allCreativeFeaturesOptOut() : {};
+      const explicit =
+        (p.degreesOfFreedomSpec?.["creative_features_spec"] as Record<string, unknown>) ?? {};
+      body["degrees_of_freedom_spec"] = {
+        ...p.degreesOfFreedomSpec,
+        creative_features_spec: { ...base, ...explicit },
+      };
+    }
+    // "Anúncios com vários anunciantes" (contextual_multi_ads). Sem esse campo, a
+    // Meta auto-inscreve (OPT_IN) todo criativo novo desde ago/2024. Passar o
+    // booleano força o estado desejado explicitamente.
+    if (p.multiAdvertiserAds != null) {
+      body["contextual_multi_ads"] = {
+        enroll_status: p.multiAdvertiserAds ? "OPT_IN" : "OPT_OUT",
+      };
+    }
     return this.sendWrite<{ id: string }>(`${acct}/adcreatives`, body);
   }
 
