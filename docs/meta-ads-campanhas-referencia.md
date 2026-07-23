@@ -1,5 +1,9 @@
 # Tipos de campanha Meta Ads — receita de configuração por objetivo
 
+> **Escopo: SÓ Meta Ads (Facebook/Instagram).** Google Ads é outro produto do MCP e
+> teria um documento próprio (`google-ads-campanhas-referencia.md`, se/quando existir).
+> Não misturar as duas plataformas aqui.
+>
 > Referência de "como montar corretamente cada tipo de campanha" no rw-mcp.
 > Cada seção traz a combinação certa de `objective` (campanha) + `optimization_goal`
 > + `destination_type` + `promoted_object` + targeting/criativo, com os padrões
