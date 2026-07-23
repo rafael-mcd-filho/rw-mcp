@@ -4,8 +4,9 @@
   "description": "MCP Server para integrações RW: Meta Ads, relatórios e automações",
   "type": "module",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "gen:referencia": "node scripts/gen-referencia.mjs",
+    "build": "node scripts/gen-referencia.mjs && tsc",
+    "dev": "node scripts/gen-referencia.mjs && tsc --watch",
     "start": "node dist/src/http.js",
     "start:http": "node dist/src/http.js",
     "start:stdio": "node dist/src/stdio.js"

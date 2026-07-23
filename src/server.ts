@@ -50,6 +50,7 @@ import { renderIntegratedFullHtml } from "./pdf-template.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
 import { moneyBR, intBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
+import { getReferenciaMetaAds } from "./referencia.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
 import { registerWriteTools } from "./server-tools/write-tools.js";
 import { registerGoogleWriteTools } from "./server-tools/google-write-tools.js";
@@ -856,6 +857,20 @@ export function createMcpServer(
     },
     async (args) =>
       json(await client.getObject(args.id as string, args.fields as string | undefined))
+  );
+
+  server.tool(
+    "get_referencia_meta_ads",
+    "GUIA/balizamento de como montar cada tipo de campanha META ADS (Perfil/Seguidores, Alcance, Conversas, Lead via pixel, Engajamento) — a combinação certa de objective + optimization_goal + destination_type + promoted_object + targeting/criativo, com valores confirmados em contas reais e as pegadinhas conhecidas (ex.: destination_type do ThruPlay, limites de add-on de WhatsApp). É REFERÊNCIA para AJUDAR o usuário a decidir e montar, NÃO regra rígida: os pontos marcados 🔧 são decisão do gestor por campanha — sempre confirmar o caso específico. Use antes de criar campanha Meta ou quando o usuário perguntar como montar um tipo. Só Meta Ads (Facebook/Instagram); não vale para Google Ads.",
+    {
+      tipo: z
+        .string()
+        .optional()
+        .describe("Filtra por tipo: perfil, alcance, conversas, lead, engajamento. Omita para a referência completa."),
+    },
+    async (args) => ({
+      content: [{ type: "text" as const, text: getReferenciaMetaAds(args.tipo as string | undefined) }],
+    })
   );
 
   server.tool(
