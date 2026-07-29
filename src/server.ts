@@ -1140,7 +1140,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
   server.tool(
     "meta_generate_report_pdf",
-    `Gera relatório Meta Ads em PDF com 4 páginas: resumo + funil, conjuntos de anúncio, anúncios e demográficos (gênero/idade). formato='pdf' (padrão) ou 'html'.`,
+    `Gera relatório Meta Ads em PDF com 4 páginas: resumo + funil, conjuntos de anúncio, anúncios e demográficos (gênero/idade). formato='pdf' (padrão) ou 'html'. Por padrão retorna somente o relatório. Quando o usuário pedir explicitamente uma mensagem para WhatsApp, passe incluir_mensagem_whatsapp=true. A mensagem apresenta alcance e impressões em linguagem natural e contém um marcador [IA: ...]: o assistente DEVE substituí-lo por 1 ou 2 insights curtos, escritos a partir dos dados do relatório, antes de mostrar ou enviar a mensagem. Nunca exponha o marcador ao usuário.`,
     {
       ...OPTIONAL_PERIOD_SCHEMA,
       ...CLIENT_NAME_SCHEMA,
@@ -1149,6 +1149,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       ...ACCOUNT_ID_SCHEMA,
       ...FORMATO_SCHEMA,
       comparar: z.boolean().optional().describe("Compara com o período anterior (padrão: true). Passe false para não comparar."),
+      incluir_mensagem_whatsapp: z.boolean().optional().describe("Inclui o modelo da mensagem para WhatsApp. Padrão: false; use apenas quando o usuário pedir. Antes de entregar ou enviar, substitua obrigatoriamente o marcador [IA: ...] por 1 ou 2 insights gerados pelo assistente a partir do relatório."),
     },
     async (args) => {
       const { since, until } = periodFrom(args);
@@ -1280,7 +1281,10 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         demographics,
         funil,
       });
-      return renderHtmlPdfToolResponse(html, cliente, formato, accountReport.mensagem);
+      const whatsappText = (args as { incluir_mensagem_whatsapp?: boolean }).incluir_mensagem_whatsapp === true
+        ? accountReport.mensagem
+        : undefined;
+      return renderHtmlPdfToolResponse(html, cliente, formato, whatsappText);
     }
   );
 

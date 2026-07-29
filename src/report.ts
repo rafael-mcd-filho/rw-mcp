@@ -547,6 +547,7 @@ export function buildAccountReport(
   // Totais agregados para mensagem
   const totalCliques = campanhas.reduce((s, c) => s + c.cliques, 0);
   const totalImpressoes = campanhas.reduce((s, c) => s + c.impressoes, 0);
+  const totalAlcance = campanhas.reduce((s, c) => s + c.alcance, 0);
   const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
   const avgCPC = totalCliques > 0 ? totalGasto / totalCliques : 0;
 
@@ -590,11 +591,11 @@ export function buildAccountReport(
     `🖱️ Cliques: ${intBR(totalCliques)}`,
     `📈 CTR: ${pctBR(avgCTR)}`,
     `💵 CPC médio: ${moneyBR(avgCPC)}`,
-    `👀 Impressões: ${intBR(totalImpressoes)}`,
+    `👥 Seus anúncios foram exibidos ${intBR(totalImpressoes)} vezes para cerca de ${intBR(totalAlcance)} pessoas.`,
     ``,
     ``,
-    `✅ Resumo:`,
-    `[IA]`,
+    `💡 Insights:`,
+    `[IA: substitua este marcador por 1 ou 2 insights curtos, baseados nos dados do relatório, antes de entregar ou enviar a mensagem]`,
   );
 
   return {
