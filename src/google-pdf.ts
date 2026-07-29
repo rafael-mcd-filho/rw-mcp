@@ -7,6 +7,7 @@ import { BASE_REPORT_CSS, escapeHtml } from "./pdf-components.js";
 import { renderReportFooter, renderReportHeader } from "./pdf-brand.js";
 import type { GoogleAdsEnhancedReport } from "./google-report.js";
 import type { GAdGroup, GDayData, GConversionAction, GDemographics } from "./google-ads-api.js";
+import type { GoogleBusinessProfileReport } from "./google-business-report.js";
 
 // ─── Formatadores de coluna ───────────────────────────────────────────────────
 
@@ -158,7 +159,7 @@ function renderExecSummary(report: GoogleAdsEnhancedReport, c?: GoogleReportComp
   return `<div style="margin:12px 0 2px;padding:10px 13px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;font-size:11px;color:#303641;line-height:1.45">${base}${vs}</div>`;
 }
 
-function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportComparison): string {
+function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportComparison, totalPages = 3): string {
   const r = report.resumo;
   const nicho = (report.analise_benchmark?.length
     ? report.analise_benchmark.map((b) => `${b.label}: ${b.level}`).join(" · ")
@@ -235,13 +236,13 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
       ${campTable}
       ${camps.length > 10 ? `<p class="note-row">Exibindo as 10 campanhas de maior investimento (${camps.length} no total).</p>` : ""}
     </div>
-    ${footer(report.cliente ?? "Cliente", report.periodo, 1, 3)}
+    ${footer(report.cliente ?? "Cliente", report.periodo, 1, totalPages)}
   </div>`;
 }
 
 // ─── Página 2: Grupos de Anúncio + Keywords + Search Terms ────────────────────
 
-function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
+function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[], totalPages = 3): string {
   // Ad groups table
   const agRows = [...adGroups].sort((a, b) => b.gasto - a.gasto).slice(0, 12).map(g => `<tr>
     <td><strong>${esc(g.nome)}</strong><span>${esc(g.campanha)}</span></td>
@@ -336,7 +337,7 @@ function page2(report: GoogleAdsEnhancedReport, adGroups: GAdGroup[]): string {
     </div>
     ${termsSection}
     </div>
-    ${footer(report.cliente ?? "Cliente", report.periodo, 2, 3)}
+    ${footer(report.cliente ?? "Cliente", report.periodo, 2, totalPages)}
   </div>`;
 }
 
@@ -346,6 +347,7 @@ function page3(
   report: GoogleAdsEnhancedReport,
   convActions: GConversionAction[],
   demographics: GDemographics,
+  totalPages = 3,
 ): string {
   // Conversion actions
   const maxConv = Math.max(...convActions.map(c => c.todas_conversoes), 1);
@@ -440,7 +442,54 @@ function page3(
     ${convSection}
     ${demoSection}
     ${notesSection}
-    ${footer(report.cliente ?? "Cliente", report.periodo, 3, 3)}
+    ${footer(report.cliente ?? "Cliente", report.periodo, 3, totalPages)}
+  </div>`;
+}
+
+function page4(report: GoogleAdsEnhancedReport, profile: GoogleBusinessProfileReport): string {
+  const m = profile.metricas;
+  const a = profile.avaliacoes;
+  const interactions = m.solicitacoes_rota + m.cliques_ligar + m.cliques_site + m.conversas;
+  const terms = profile.termos_busca.map(row => `<tr>
+    <td>${esc(row.termo)}</td>
+    <td class="num">${row.estimado ? "até " : ""}${int(row.impressoes)}</td>
+  </tr>`).join("");
+
+  return `<div class="page compact-page">
+    ${header(report.cliente ?? "Cliente", report.periodo, "Perfil da Empresa · Busca e Maps")}
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="kpi-label">Visualizações do perfil</div><div class="kpi-value">${int(m.visualizacoes_total)}</div><div class="kpi-note">Busca e Maps</div></div>
+      <div class="kpi-card"><div class="kpi-label">Solicitações de rota</div><div class="kpi-value">${int(m.solicitacoes_rota)}</div><div class="kpi-note">Intenção de visita</div></div>
+      <div class="kpi-card"><div class="kpi-label">Ligações</div><div class="kpi-value">${int(m.cliques_ligar)}</div><div class="kpi-note">Cliques para ligar</div></div>
+      <div class="kpi-card"><div class="kpi-label">Cliques no site</div><div class="kpi-value">${int(m.cliques_site)}</div><div class="kpi-note">A partir do perfil</div></div>
+    </div>
+    <div class="section" style="margin-top:14px">
+      <p class="g-section-title">Onde o perfil apareceu</p><hr class="g-section-rule"/>
+      <div class="demog-section">
+        <div class="demog-block"><h4>Google Busca</h4><div style="font-size:25px;font-weight:800">${int(m.visualizacoes_busca)}</div><p class="note-row">Celular e computador.</p></div>
+        <div class="demog-block"><h4>Google Maps</h4><div style="font-size:25px;font-weight:800">${int(m.visualizacoes_maps)}</div><p class="note-row">Celular e computador.</p></div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:14px">
+      <p class="g-section-title">Interações e reputação</p><hr class="g-section-rule"/>
+      <table class="conv-table"><tbody>
+        <tr><td>Interações diretas no perfil</td><td class="num"><strong>${int(interactions)}</strong></td></tr>
+        <tr><td>Conversas iniciadas</td><td class="num">${int(m.conversas)}</td></tr>
+        <tr><td>Avaliações totais</td><td class="num">${int(a.total)}</td></tr>
+        <tr><td>Nota média</td><td class="num">${a.nota_media ? a.nota_media.toFixed(1).replace(".", ",") : "—"}</td></tr>
+        <tr><td>Novas avaliações no período</td><td class="num">${int(a.novas_no_periodo)}</td></tr>
+        <tr><td>Taxa de resposta</td><td class="num">${pct(a.taxa_resposta)}</td></tr>
+      </tbody></table>
+    </div>
+    <div class="section" style="margin-top:14px">
+      <p class="g-section-title">Principais termos usados para encontrar o perfil</p><hr class="g-section-rule"/>
+      <table class="conv-table"><thead><tr><th>Termo</th><th class="num">Impressões</th></tr></thead><tbody>
+        ${terms || '<tr><td colspan="2">Sem termos disponíveis para o mês.</td></tr>'}
+      </tbody></table>
+      <p class="note-row">Termos são mensais e podem abranger mais dias que o período diário do relatório.</p>
+    </div>
+    <div class="note" style="margin-top:14px"><strong>Importante:</strong> métricas do perfil não são somadas às do Google Ads, pois pode existir sobreposição entre tráfego orgânico e pago.</div>
+    ${footer(report.cliente ?? "Cliente", report.periodo, 4, 4)}
   </div>`;
 }
 
@@ -460,6 +509,7 @@ export interface GooglePdfOptions {
   demographics?: GDemographics;
   dailyRows?: GDayData[];
   comparacao?: GoogleReportComparison;
+  businessProfile?: GoogleBusinessProfileReport;
 }
 
 export function renderGoogleReportHtml(
@@ -470,9 +520,11 @@ export function renderGoogleReportHtml(
   const convActions = opts.conversionActions ?? [];
   const demographics = opts.demographics ?? { por_genero: [], por_faixa_etaria: [] };
 
-  const p1 = page1(report, opts.comparacao);
-  const p2 = page2(report, adGroups);
-  const p3 = page3(report, convActions, demographics);
+  const totalPages = opts.businessProfile ? 4 : 3;
+  const p1 = page1(report, opts.comparacao, totalPages);
+  const p2 = page2(report, adGroups, totalPages);
+  const p3 = page3(report, convActions, demographics, totalPages);
+  const p4 = opts.businessProfile ? page4(report, opts.businessProfile) : "";
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -489,6 +541,7 @@ ${GOOGLE_PDF_CSS}
 ${p1}
 ${p2}
 ${p3}
+${p4}
 <script>window.__READY__ = true;</script>
 </body>
 </html>`;
@@ -502,9 +555,11 @@ export function renderGooglePagesFragment(
   const adGroups = opts.adGroups ?? [];
   const convActions = opts.conversionActions ?? [];
   const demographics = opts.demographics ?? { por_genero: [], por_faixa_etaria: [] };
+  const totalPages = opts.businessProfile ? 4 : 3;
   return [
-    page1(report, opts.comparacao),
-    page2(report, adGroups),
-    page3(report, convActions, demographics),
+    page1(report, opts.comparacao, totalPages),
+    page2(report, adGroups, totalPages),
+    page3(report, convActions, demographics, totalPages),
+    ...(opts.businessProfile ? [page4(report, opts.businessProfile)] : []),
   ].join("\n");
 }

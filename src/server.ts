@@ -35,6 +35,7 @@ import {
   buildIntegratedComparisonReport,
   buildIntegratedPdfModel,
   buildIntegratedComparisonPdfModel,
+  appendGoogleBusinessProfileMessage,
   type DailyPoint,
   type GoogleAdsEnhancedReport,
   type IntegratedReport,
@@ -56,6 +57,7 @@ import { registerWriteTools } from "./server-tools/write-tools.js";
 import { registerGoogleWriteTools } from "./server-tools/google-write-tools.js";
 import { registerGoogleBusinessTools } from "./server-tools/google-business-tools.js";
 import { googleBusinessConfigured } from "./google-business-api.js";
+import { buildGoogleBusinessProfileReport, type GoogleBusinessProfileReport } from "./google-business-report.js";
 import { resolveNiche } from "./intelligence/niche.js";
 
 const ACCOUNT_DESC =
@@ -1470,6 +1472,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       id_conta_google?: string | number;
       incluir_meta?: boolean;
       incluir_google?: boolean;
+      incluir_perfil_google?: boolean;
       incluir_keywords?: boolean;
       keywords?: boolean;
       incluir_termos_pesquisa?: boolean;
@@ -1493,6 +1496,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       id_conta_google: OPTIONAL_SCALAR.describe("Alias de google_customer_id."),
       incluir_meta: z.boolean().optional().describe("Se false, nao busca Meta Ads."),
       incluir_google: z.boolean().optional().describe("Se false, nao busca Google Ads."),
+      incluir_perfil_google: z.boolean().optional().describe("Busca automaticamente o Perfil da Empresa correspondente ao cliente. Padrão: true."),
       incluir_keywords: z.boolean().optional().describe("Inclui top keywords na leitura Google. Padrao: true."),
       keywords: z.boolean().optional().describe("Alias de incluir_keywords."),
       incluir_termos_pesquisa: z.boolean().optional().describe("Inclui termos de pesquisa reais. Padrao: true."),
@@ -1796,6 +1800,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         ...FORMATO_SCHEMA,
         ...COMMON_COMPAT_SCHEMA,
         comparar: z.boolean().optional().describe("Compara com o período anterior (padrão: true). Passe false para não comparar."),
+        incluir_perfil_google: z.boolean().optional().describe("Busca e inclui automaticamente o Perfil da Empresa correspondente. Padrão: true."),
       },
       async (args) => {
         const { since, until } = periodFrom(args);
@@ -1810,6 +1815,12 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           getGoogleAdsDemographics(cid, since, until, datePreset).catch(() => ({ por_genero: [], por_faixa_etaria: [] })),
         ]);
         const report = buildGoogleAdsReport(rawReport, { clientName: clientNameFrom(args), ...details });
+        const businessProfile =
+          (args as { incluir_perfil_google?: boolean }).incluir_perfil_google !== false &&
+          googleBusinessConfigured() &&
+          since && until
+            ? await buildGoogleBusinessProfileReport(report.cliente ?? clientNameFrom(args) ?? "", since, until).catch(() => undefined)
+            : undefined;
 
         // Comparação com o período anterior (padrão; opt-out comparar:false).
         let comparacao: GoogleReportComparison | undefined;
@@ -1836,8 +1847,16 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           }
         }
 
-        const html = renderGoogleReportHtml(report, { adGroups, conversionActions: convActions, demographics, dailyRows, comparacao });
-        return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args), report.mensagem);
+        const html = renderGoogleReportHtml(report, {
+          adGroups,
+          conversionActions: convActions,
+          demographics,
+          dailyRows,
+          comparacao,
+          businessProfile,
+        });
+        const mensagem = appendGoogleBusinessProfileMessage(report.mensagem, businessProfile);
+        return renderHtmlPdfToolResponse(html, report.cliente ?? `Google Ads ${cid}`, formatoFrom(args), mensagem);
       }
     );
 
@@ -1912,6 +1931,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         let googleConvActions: Awaited<ReturnType<typeof getGoogleAdsConversionActions>> = [];
         let googleDemographics: Awaited<ReturnType<typeof getGoogleAdsDemographics>> = { por_genero: [], por_faixa_etaria: [] };
         let googleComparacao: GoogleReportComparison | undefined;
+        let googleBusinessProfile: GoogleBusinessProfileReport | undefined;
 
         if (wantsMeta && metaAccountId) {
           const [accountRows, adsetRows, adRows, demoRows] = await Promise.all([
@@ -2001,6 +2021,14 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           googleAdGroups = adGroups;
           googleConvActions = convActions;
           googleDemographics = demographics;
+          if (
+            iArgs.incluir_perfil_google !== false &&
+            googleBusinessConfigured() &&
+            since &&
+            until
+          ) {
+            googleBusinessProfile = await buildGoogleBusinessProfileReport(clientName, since, until).catch(() => undefined);
+          }
           const prevGoogle = smartPreviousPeriod(since, until);
           if (prevGoogle) {
             try {
@@ -2031,6 +2059,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           metaReport,
           googleReport,
           googleConversionActions: googleConvActions,
+          googleBusinessProfile,
         });
         const model = buildIntegratedPdfModel({ report: integratedReport });
 
@@ -2043,6 +2072,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
             conversionActions: googleConvActions,
             demographics: googleDemographics,
             comparacao: googleComparacao,
+            businessProfile: googleBusinessProfile,
           });
         }
 

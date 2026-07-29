@@ -14,6 +14,7 @@ import type {
 import { round2, moneyBR, intBR, pctBR, dateBR, sortKeyFromBR, periodoMsgFmt } from "./format.js";
 import { classifyMetric } from "./intelligence/benchmarks.js";
 import type { BenchmarkNiche, BenchmarkResult } from "./intelligence/types.js";
+import type { GoogleBusinessProfileReport } from "./google-business-report.js";
 
 function fmtDeltaPercent(value: number | null): string {
   if (value == null) return "novo";
@@ -795,6 +796,7 @@ export interface IntegratedReport {
   canais: {
     meta_ads?: MetaAccountReportLike;
     google_ads?: GoogleAdsEnhancedReport;
+    google_business_profile?: GoogleBusinessProfileReport;
   };
   totais: {
     investimento_total: number;
@@ -937,6 +939,23 @@ function buildIntegratedMessage(
     );
   }
 
+  const profile = report.canais.google_business_profile;
+  if (profile) {
+    const m = profile.metricas;
+    lines.push(
+      ``,
+      `━━━━━━━━━━━━━━━━`,
+      `📍 *PERFIL DA EMPRESA*`,
+      `━━━━━━━━━━━━━━━━`,
+      `👀 Visualizações do perfil: ${intBR(m.visualizacoes_total)}`,
+      `🔎 Na Busca: ${intBR(m.visualizacoes_busca)} · 🗺️ No Maps: ${intBR(m.visualizacoes_maps)}`,
+      `🚗 Solicitações de rota: ${intBR(m.solicitacoes_rota)}`,
+      `📞 Cliques para ligar: ${intBR(m.cliques_ligar)}`,
+      `🌐 Cliques no site: ${intBR(m.cliques_site)}`,
+      `⭐ Avaliações: ${intBR(profile.avaliacoes.total)} · Nota ${profile.avaliacoes.nota_media.toFixed(1).replace(".", ",")}`,
+    );
+  }
+
   lines.push(``, ``, `✅ Resumo:`, `[IA]`);
 
   return lines.join("\n");
@@ -948,6 +967,7 @@ export function buildIntegratedReport(input: {
   metaReport?: MetaAccountReportLike;
   googleReport?: GoogleAdsEnhancedReport;
   googleConversionActions?: GConversionAction[];
+  googleBusinessProfile?: GoogleBusinessProfileReport;
 }): IntegratedReport {
   const investimentoMeta = input.metaReport?.totais.gasto ?? 0;
   const investimentoGoogle = input.googleReport?.resumo.gasto_total ?? 0;
@@ -995,6 +1015,7 @@ export function buildIntegratedReport(input: {
     canais: {
       meta_ads: input.metaReport,
       google_ads: input.googleReport,
+      google_business_profile: input.googleBusinessProfile,
     },
     totais: {
       investimento_total: investimentoTotal,
@@ -1019,6 +1040,29 @@ export function buildIntegratedReport(input: {
     ...base,
     mensagem: buildIntegratedMessage(base, input.googleConversionActions),
   };
+}
+
+export function appendGoogleBusinessProfileMessage(
+  message: string,
+  profile?: GoogleBusinessProfileReport
+): string {
+  if (!profile) return message;
+  const m = profile.metricas;
+  const block = [
+    `━━━━━━━━━━━━━━━━`,
+    `📍 *PERFIL DA EMPRESA*`,
+    `━━━━━━━━━━━━━━━━`,
+    `👀 Visualizações do perfil: ${intBR(m.visualizacoes_total)}`,
+    `🔎 Na Busca: ${intBR(m.visualizacoes_busca)} · 🗺️ No Maps: ${intBR(m.visualizacoes_maps)}`,
+    `🚗 Solicitações de rota: ${intBR(m.solicitacoes_rota)}`,
+    `📞 Cliques para ligar: ${intBR(m.cliques_ligar)}`,
+    `🌐 Cliques no site: ${intBR(m.cliques_site)}`,
+    `⭐ Avaliações: ${intBR(profile.avaliacoes.total)} · Nota ${profile.avaliacoes.nota_media.toFixed(1).replace(".", ",")}`,
+    ``,
+  ].join("\n");
+  return message.includes("[IA]")
+    ? message.replace("[IA]", `${block}[IA]`)
+    : `${message}\n\n${block}`;
 }
 
 function buildIntegratedComparisonMessage(report: IntegratedComparisonReport): string {
