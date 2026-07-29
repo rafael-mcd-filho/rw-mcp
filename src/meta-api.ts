@@ -579,6 +579,27 @@ export class MetaAdsClient {
   }
 
   // Busca insights para um único período
+  /** URL clicável do preview oficial de um anúncio no feed. */
+  async getAdPreviewLink(adId: string): Promise<string | null> {
+    try {
+      const ad = await this.request<{ creative?: { id?: string } }>(
+        adId,
+        { fields: "creative{id}" }
+      );
+      const creativeId = ad.creative?.id;
+      if (!creativeId) return null;
+      const previews = await this.requestPaged<{ body?: string }>(
+        `${creativeId}/previews`,
+        { ad_format: "DESKTOP_FEED_STANDARD" }
+      );
+      const body = previews[0]?.body ?? "";
+      const src = body.match(/<iframe[^>]+src=["']([^"']+)["']/i)?.[1];
+      return src ? src.replace(/&amp;/g, "&").replace(/&#38;/g, "&") : null;
+    } catch {
+      return null;
+    }
+  }
+
   async getInsights(options: InsightsOptions): Promise<Insight[]> {
     const { level, entityId } = options;
     const params = this.normalizeInsightOptions(options);

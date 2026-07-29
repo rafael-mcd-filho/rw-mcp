@@ -1179,13 +1179,19 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       const demographics = processMetaDemographics(demoRows);
       const funil = buildMetaFunil(adsets, accountRows);
 
-      // Top criativo do período (melhor resultado) com preview embutido.
-      let topCriativo: TopCriativo | undefined;
+      // Top 4 criativos do período, com thumbnail e link de preview oficial.
+      let topCriativos: TopCriativo[] = [];
       try {
-        const topAd = [...ads].filter((a) => a.gasto > 0).sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)[0];
-        if (topAd?.ad_id) {
-          const url = await client.getAdCreativeThumb(topAd.ad_id);
-          topCriativo = {
+        const topAds = [...ads]
+          .filter((a) => a.gasto > 0 && a.ad_id)
+          .sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)
+          .slice(0, 4);
+        topCriativos = await Promise.all(topAds.map(async (topAd) => {
+          const [thumbUrl, previewUrl] = await Promise.all([
+            client.getAdCreativeThumb(topAd.ad_id!),
+            client.getAdPreviewLink(topAd.ad_id!),
+          ]);
+          return {
             nome: topAd.nome,
             conjunto: topAd.conjunto,
             headlineLabel: topAd.headlineLabel,
@@ -1193,11 +1199,12 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
             custo_resultado: topAd.custo_resultado,
             gasto: topAd.gasto,
             ctr: topAd.ctr,
-            preview: url ? await imageToDataUri(url) : null,
+            preview: thumbUrl ? await imageToDataUri(thumbUrl) : null,
+            preview_url: previewUrl,
           };
-        }
+        }));
       } catch {
-        // sem destaque de criativo se falhar
+        // sem destaques de criativo se falhar
       }
 
       // Totais da conta
@@ -1270,7 +1277,7 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
         cliente,
         periodo,
         comparacao,
-        topCriativo,
+        topCriativos,
         campanhas: accountReport.campanhas,
         totais: { gasto: accountReport.totais.gasto, totalImpressions: totalImp, totalReach, totalCliques, avgCTR, avgCPM, avgFrequency },
         leitura,
@@ -1897,7 +1904,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         let metaDemographics: ReturnType<typeof processMetaDemographics> = { por_genero: [], por_faixa_etaria: [] };
         let metaFunil: ReturnType<typeof buildMetaFunil> = { alcance: 0, cliques: 0, cliques_link: 0, meta_label: "", meta_valor: 0 };
         let metaComparacao: MetaReportComparison | undefined;
-        let topCriativo: TopCriativo | undefined;
+        let topCriativos: TopCriativo[] = [];
         let metaTotaisExt = { totalImp: 0, totalReach: 0, totalCliques: 0, avgCTR: 0, avgCPM: 0, avgFrequency: 0 };
 
         let googleReport: GoogleAdsEnhancedReport | undefined;
@@ -1919,10 +1926,16 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           metaDemographics = processMetaDemographics(demoRows);
           metaFunil = buildMetaFunil(metaAdsets, accountRows);
           try {
-            const topAd = [...metaAds].filter((a) => a.gasto > 0).sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)[0];
-            if (topAd?.ad_id) {
-              const url = await client.getAdCreativeThumb(topAd.ad_id);
-              topCriativo = {
+            const topAds = [...metaAds]
+              .filter((a) => a.gasto > 0 && a.ad_id)
+              .sort((a, b) => b.resultado - a.resultado || b.gasto - a.gasto)
+              .slice(0, 4);
+            topCriativos = await Promise.all(topAds.map(async (topAd) => {
+              const [thumbUrl, previewUrl] = await Promise.all([
+                client.getAdCreativeThumb(topAd.ad_id!),
+                client.getAdPreviewLink(topAd.ad_id!),
+              ]);
+              return {
                 nome: topAd.nome,
                 conjunto: topAd.conjunto,
                 headlineLabel: topAd.headlineLabel,
@@ -1930,9 +1943,10 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
                 custo_resultado: topAd.custo_resultado,
                 gasto: topAd.gasto,
                 ctr: topAd.ctr,
-                preview: url ? await imageToDataUri(url) : null,
+                preview: thumbUrl ? await imageToDataUri(thumbUrl) : null,
+                preview_url: previewUrl,
               };
-            }
+            }));
           } catch { /* sem criativo */ }
           let totalImp = 0, totalReach = 0, totalCliques = 0, totalFreqWeight = 0;
           for (const r of accountRows) {
@@ -2052,7 +2066,7 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
             funil: metaFunil,
             leitura,
             comparacao: metaComparacao,
-            topCriativo,
+            topCriativos,
             proximosPassos: [
               "Revisar conjuntos com CPM acima de R$ 15 — pode indicar saturação de audiência.",
               "Anúncios com frequência acima de 3,0 devem ser rotacionados ou pausados.",
