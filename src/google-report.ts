@@ -1,6 +1,7 @@
 import type {
   GAccountReport,
   GCampaign,
+  GConversionAction,
   GDayData,
   GKeyword,
   GSearchTerm,
@@ -835,7 +836,10 @@ function metaPlatformResults(report?: MetaAccountReportLike): number {
   );
 }
 
-function buildIntegratedMessage(report: IntegratedReport): string {
+function buildIntegratedMessage(
+  report: IntegratedReport,
+  googleConversionActions: GConversionAction[] = []
+): string {
   const periodoFmt = periodoMsgFmt(report.periodo);
   const lines = [
     `📊 *Relatório de Tráfego — ${report.cliente} — ${periodoFmt}*`,
@@ -866,7 +870,13 @@ function buildIntegratedMessage(report: IntegratedReport): string {
       .filter(d => d.resultado > 0)
       .sort((a, b) => b.gasto - a.gasto);
 
-    lines.push(``, ``, `📱 *Meta Ads — ${moneyBR(report.totais.investimento_meta)}*`);
+    lines.push(
+      ``,
+      `━━━━━━━━━━━━━━━━`,
+      `📱 *META ADS*`,
+      `💰 Investimento: ${moneyBR(report.totais.investimento_meta)}`,
+      `━━━━━━━━━━━━━━━━`,
+    );
     for (const d of convSummary) {
       lines.push(`${CONV_EMOJI[d.cat]} ${CONV_LABEL[d.cat]}: ${intBR(d.resultado)} · ${CONV_COST[d.cat]}: ${moneyBR(d.gasto / d.resultado)}`);
     }
@@ -881,9 +891,30 @@ function buildIntegratedMessage(report: IntegratedReport): string {
   const google = report.canais.google_ads;
   if (google && report.totais.investimento_google > 0) {
     const gr = google.resumo;
-    lines.push(``, ``, `🔍 *Google Ads — ${moneyBR(report.totais.investimento_google)}*`);
+    lines.push(
+      ``,
+      `━━━━━━━━━━━━━━━━`,
+      `🔍 *GOOGLE ADS*`,
+      `💰 Investimento: ${moneyBR(report.totais.investimento_google)}`,
+      `━━━━━━━━━━━━━━━━`,
+    );
     if (gr.conversoes > 0) {
       lines.push(`🎯 Conversões: ${intBR(gr.conversoes)} · CPA: ${moneyBR(gr.custo_por_conversao)}`);
+    }
+    const primaryActions = googleConversionActions
+      .filter(action => action.conversoes > 0)
+      .sort((a, b) => b.conversoes - a.conversoes);
+    if (primaryActions.length > 0) {
+      lines.push(``, `*Quais conversões:*`);
+      for (const action of primaryActions.slice(0, 6)) {
+        lines.push(`• ${action.nome}: ${intBR(action.conversoes)}`);
+      }
+      if (primaryActions.length > 6) {
+        const demais = primaryActions
+          .slice(6)
+          .reduce((sum, action) => sum + action.conversoes, 0);
+        lines.push(`• Outras ações: ${intBR(demais)}`);
+      }
     }
     lines.push(
       `🖱️ Cliques: ${intBR(gr.cliques)}`,
@@ -903,6 +934,7 @@ export function buildIntegratedReport(input: {
   periodLabel: string;
   metaReport?: MetaAccountReportLike;
   googleReport?: GoogleAdsEnhancedReport;
+  googleConversionActions?: GConversionAction[];
 }): IntegratedReport {
   const investimentoMeta = input.metaReport?.totais.gasto ?? 0;
   const investimentoGoogle = input.googleReport?.resumo.gasto_total ?? 0;
@@ -970,7 +1002,10 @@ export function buildIntegratedReport(input: {
     mensagem: "",
   };
 
-  return { ...base, mensagem: buildIntegratedMessage(base) };
+  return {
+    ...base,
+    mensagem: buildIntegratedMessage(base, input.googleConversionActions),
+  };
 }
 
 function buildIntegratedComparisonMessage(report: IntegratedComparisonReport): string {

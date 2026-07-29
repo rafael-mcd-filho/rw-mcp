@@ -2025,7 +2025,13 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           throw new Error("Nao foi possivel montar o relatorio: informe nome_cliente com IDs cadastrados ou passe meta_account_id/google_customer_id.");
         }
 
-        const integratedReport = buildIntegratedReport({ clientName, periodLabel, metaReport, googleReport });
+        const integratedReport = buildIntegratedReport({
+          clientName,
+          periodLabel,
+          metaReport,
+          googleReport,
+          googleConversionActions: googleConvActions,
+        });
         const model = buildIntegratedPdfModel({ report: integratedReport });
 
         let googleFragment = "";
