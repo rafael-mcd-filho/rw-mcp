@@ -3,6 +3,7 @@
 
 import { BASE_REPORT_CSS } from "./pdf-components.js";
 import { moneyBR } from "./format.js";
+import { renderReportFooter, renderReportHeader } from "./pdf-brand.js";
 
 interface UnidadeRow {
   nome: string;
@@ -92,15 +93,15 @@ ${BASE_REPORT_CSS}
 .badge-amber { background: #fef9c3; color: #713f12; }
 .badge-red   { background: #fee2e2; color: #991b1b; }
 .bar-inline { width: 100%; height: 8px; background: #eceff3; border-radius: 999px; overflow: hidden; }
-.bar-inline-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #1A53F0, #0B2A6B); }
-.table td.invest-value strong { color: #1440C9; font-size: 11px; }
+.bar-inline-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, var(--report-primary), var(--report-navy)); }
+.table td.invest-value strong { color: var(--report-primary-strong); font-size: 11px; }
 .table td.roi-value { color: #166534; font-weight: 700; }
-.model-box { background: #f0f4ff; border-left: 4px solid #1A53F0; border-radius: 0 8px 8px 0; padding: 13px 15px; margin-bottom: 14px; }
-.model-box h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; color: #1440C9; letter-spacing: 0.05em; }
+.model-box { background: #f0f4ff; border-left: 4px solid var(--report-primary); border-radius: 0 8px 8px 0; padding: 13px 15px; margin-bottom: 14px; }
+.model-box h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; color: var(--report-primary-strong); letter-spacing: 0.05em; }
 .model-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .model-step { background: #fff; border-radius: 6px; padding: 9px; text-align: center; border: 1px solid #dbe4ff; }
 .model-step span { display: block; font-size: 8.5px; color: #6b7280; margin-bottom: 4px; }
-.model-step strong { display: block; font-size: 13px; color: #1440C9; }
+.model-step strong { display: block; font-size: 13px; color: var(--report-primary-strong); }
 .model-step small { display: block; font-size: 8px; color: #9ca3af; margin-top: 2px; }
 .scale-box { background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 0 8px 8px 0; padding: 11px 14px; margin-bottom: 14px; font-size: 10.5px; line-height: 1.5; color: #3b414c; }
 .scale-box strong { color: #92400e; }
@@ -118,20 +119,13 @@ ${BASE_REPORT_CSS}
 <!-- ───────────────── PÁGINA 1 ───────────────── -->
 <div class="page">
   <div class="topline"></div>
-  <header>
-    <div class="brand">
-      <div class="brand-fallback">Plugue</div>
-      <div class="brand-text">
-        <strong>Beco Mágico</strong>
-        <span>Análise de CPL — Todas as Unidades</span>
-      </div>
-    </div>
-    <div class="period">
-      Gerado em <strong>${hoje}</strong><br>
-      01/06 a 18/06/2026 · sem dia 12<br>
-      <strong>17 dias ativos · Meta Ads</strong>
-    </div>
-  </header>
+  ${renderReportHeader({
+    category: "Análise de CPL",
+    description: "Todas as unidades",
+    client: "Beco Mágico",
+    period: "01/06 a 18/06/2026 · sem dia 12",
+    detail: "17 dias ativos · Meta Ads",
+  })}
 
   <div class="hero">
     <h1>CPL por Unidade<br>Junho 2026</h1>
@@ -192,28 +186,24 @@ ${BASE_REPORT_CSS}
     <strong>Como interpretar o CPL:</strong> cada lead corresponde a uma reserva. Quanto menor o CPL, mais barato é cada reserva gerada pelo tráfego pago. A variação entre unidades reflete diferenças de público, criativos, histórico de pixel e maturidade das campanhas.
   </div>
 
-  <footer>
-    <span>Beco Mágico · Análise de CPL · Junho 2026 · Meta Ads · Plugue Marketing Solutions</span>
-    <span>1 / 2</span>
-  </footer>
+  ${renderReportFooter({
+    sourceLabel: "Beco Mágico · Análise de CPL · Junho 2026 · Meta Ads",
+    generatedAt: `Gerado em ${hoje}`,
+    page: 1,
+    total: 2,
+  })}
 </div>
 
 <!-- ───────────────── PÁGINA 2 ───────────────── -->
 <div class="page compact-page">
   <div class="topline"></div>
-  <header>
-    <div class="brand">
-      <div class="brand-fallback">Plugue</div>
-      <div class="brand-text">
-        <strong>Beco Mágico</strong>
-        <span>Estimativa de Investimento — Meta R$ 120.000</span>
-      </div>
-    </div>
-    <div class="period">
-      01/06 a 18/06/2026 · sem dia 12<br>
-      <strong>17 dias ativos · Meta Ads</strong>
-    </div>
-  </header>
+  ${renderReportHeader({
+    category: "Planejamento de mídia",
+    description: "Estimativa de investimento · Meta R$ 120.000",
+    client: "Beco Mágico",
+    period: "01/06 a 18/06/2026 · sem dia 12",
+    detail: "17 dias ativos · Meta Ads",
+  })}
 
   <div class="model-box">
     <h3>Modelo de Receita</h3>
@@ -293,10 +283,12 @@ ${BASE_REPORT_CSS}
     </div>
   </div>
 
-  <footer>
-    <span>Beco Mágico · Estimativa de Investimento · Junho 2026 · Meta Ads · Plugue Marketing Solutions</span>
-    <span>2 / 2</span>
-  </footer>
+  ${renderReportFooter({
+    sourceLabel: "Beco Mágico · Estimativa de investimento · Junho 2026 · Meta Ads",
+    generatedAt: `Gerado em ${hoje}`,
+    page: 2,
+    total: 2,
+  })}
 </div>
 
 </body>

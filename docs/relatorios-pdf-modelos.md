@@ -30,7 +30,7 @@ Isso da previsibilidade de quebra de pagina. O navegador nao decide sozinho onde
 
 Manter como padrao:
 
-- barra superior vermelho/preto em todas as paginas
+- barra superior azul principal/azul-marinho em todas as paginas
 - fundo externo cinza claro e folha branca
 - logo e identidade no cabecalho
 - periodo/cliente/canais no canto direito
@@ -46,9 +46,10 @@ O visual e executivo, limpo e repetivel. Isso e mais importante que criar layout
 
 Devem virar CSS compartilhado:
 
-- cores principais: `#ff2b32`, `#e41f2b`, `#101216`, `#111827`
+- cores de marca: `#1A53F0`, `#1440C9`, `#0B2A6B`
+- cores estruturais: `#101216`, `#111827`
 - textos: `#16181d`, `#3b414c`, `#5f6673`, `#6b7280`, `#8a92a0`
-- fundos: `#fbfcfe`, `#f7f8fa`, `#f8fafc`, `#fff7f7`
+- fundos: `#fbfcfe`, `#f7f8fa`, `#f8fafc`, `#eef3ff`
 - bordas: `#e5e7eb`, `#e7eaf0`, `#eef0f4`, `#edf0f5`
 - fonte: `Inter, Arial, Helvetica, sans-serif`
 - `letter-spacing: 0`

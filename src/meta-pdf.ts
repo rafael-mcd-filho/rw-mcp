@@ -5,6 +5,7 @@ import type { Insight } from "./meta-api.js";
 import { aggregate } from "./report.js";
 import { detectCategory } from "./objectives.js";
 import { BASE_REPORT_CSS, escapeHtml } from "./pdf-components.js";
+import { renderReportFooter, renderReportHeader } from "./pdf-brand.js";
 import { moneyBR, intBR, pctBR } from "./format.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -214,10 +215,10 @@ export const META_PDF_CSS = `
 }
 .funnel-step strong { font-size: 18px; font-weight: 850; line-height: 1; }
 .funnel-step span { font-size: 9.5px; margin-top: 3px; opacity: .9; }
-.funnel-step-1 { width:100%; background:#1A53F0; clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%); }
-.funnel-step-2 { width:100%; background:#1748d4; clip-path: polygon(4% 0, 96% 0, 92% 100%, 8% 100%); }
-.funnel-step-3 { width:100%; background:#133db8; clip-path: polygon(8% 0, 92% 0, 88% 100%, 12% 100%); }
-.funnel-step-4 { width:100%; background:#0B2A6B; clip-path: polygon(12% 0, 88% 0, 84% 100%, 16% 100%); }
+.funnel-step-1 { width:100%; background:var(--report-primary); clip-path: polygon(0 0, 100% 0, 96% 100%, 4% 100%); }
+.funnel-step-2 { width:100%; background:var(--report-primary-mid); clip-path: polygon(4% 0, 96% 0, 92% 100%, 8% 100%); }
+.funnel-step-3 { width:100%; background:var(--report-primary-deep); clip-path: polygon(8% 0, 92% 0, 88% 100%, 12% 100%); }
+.funnel-step-4 { width:100%; background:var(--report-navy); clip-path: polygon(12% 0, 88% 0, 84% 100%, 16% 100%); }
 .funnel-pct { font-size: 8px; color: #6b7280; text-align: center; margin: 1px 0; }
 .m-section-title { font-size: 11px; font-weight: 750; color: #101216; margin: 12px 0 5px; text-transform: uppercase; letter-spacing: .5px; }
 .m-section-rule { border: none; border-top: 1px solid #e5e7eb; margin: 0 0 7px; }
@@ -229,7 +230,7 @@ export const META_PDF_CSS = `
 .demog-table th.num, .demog-table td.num { text-align: right; }
 .demog-table td { padding: 5px 5px; border-bottom: 1px solid #eef0f4; color: #252b36; font-variant-numeric: tabular-nums; }
 .demog-bar-track { height: 5px; background: #eceff3; border-radius: 999px; overflow: hidden; margin-top: 3px; }
-.demog-bar-fill  { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#1A53F0,#0B2A6B); }
+.demog-bar-fill  { height: 100%; border-radius: 999px; background: linear-gradient(90deg,var(--report-primary),var(--report-navy)); }
 `;
 
 // ─── Layout helpers ────────────────────────────────────────────────────────────
@@ -237,27 +238,23 @@ export const META_PDF_CSS = `
 function pageHeader(cliente: string, periodo: string, tipo: string): string {
   return `
     <div class="topline"></div>
-    <header>
-      <div class="brand">
-        <div class="brand-text">
-          <strong>Plugue</strong>
-          <span>Marketing Solutions</span>
-        </div>
-      </div>
-      <div class="period">
-        <strong>${esc(tipo)}</strong><br>
-        <span>${esc(cliente)}</span><br>
-        <span>${esc(periodo)}</span>
-      </div>
-    </header>`;
+    ${renderReportHeader({
+      category: "Meta Ads",
+      description: tipo,
+      client: cliente,
+      period: periodo,
+      detail: "Mídia social e performance",
+    })}`;
 }
 
 function pageFooter(cliente: string, periodo: string, page: number, total: number): string {
-  const now = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  return `<div class="footer">
-    <span>Plugue Marketing Solutions · ${esc(cliente)} · ${esc(periodo)}</span>
-    <span>Gerado em ${now} · Página ${page}/${total}</span>
-  </div>`;
+  const now = new Date().toLocaleDateString("pt-BR");
+  return renderReportFooter({
+    sourceLabel: `Plugue Marketing Solutions · ${cliente} · ${periodo}`,
+    generatedAt: `Gerado em ${now}`,
+    page,
+    total,
+  });
 }
 
 function sectionTitle(t: string): string {
@@ -455,7 +452,7 @@ function renderTopCriativo(t?: TopCriativo): string {
   return `<div style="display:flex;gap:14px;align-items:center;padding:12px 14px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;margin-bottom:12px">
     ${img}
     <div style="min-width:0">
-      <div style="font-size:10px;font-weight:700;color:#1A53F0;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Top criativo do período</div>
+      <div style="font-size:10px;font-weight:700;color:var(--report-primary);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Top criativo do período</div>
       <div style="font-size:13px;font-weight:800;color:#101216;margin-bottom:2px">${esc(t.nome)}</div>
       <div style="font-size:10px;color:#6b7280;margin-bottom:5px">${esc(t.conjunto)}</div>
       <div style="font-size:10.5px;color:#303641">${intBR(t.resultado)} ${esc(t.headlineLabel.toLowerCase())} · ${money(t.gasto)} · ${t.resultado > 0 ? `custo ${money(t.custo_resultado)}` : "sem conversões"} · CTR ${pctBR(t.ctr)}</div>

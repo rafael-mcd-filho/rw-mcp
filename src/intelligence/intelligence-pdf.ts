@@ -3,28 +3,16 @@
 // sem depender do PdfReportModel — dados vêm diretamente de DiagnosisResult
 // e AuditResult.
 
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { BASE_REPORT_CSS, escapeHtml } from "../pdf-components.js";
+import {
+  reportLogoDataUri,
+  renderReportFooter,
+  renderReportHeader,
+} from "../pdf-brand.js";
 import type { DiagnosisResult, ChannelDiagnosis } from "./diagnosis.js";
 import type { AnalysisResult, ChannelAudit, CampaignVerdict } from "./audit.js";
 import type { LayerAnalysis } from "./layers.js";
 import type { Alert, BenchmarkResult } from "./types.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-
-function logoDataUri(): string | null {
-  const candidates = [
-    process.env.META_REPORT_LOGO,
-    join(here, "..", "..", "..", "assets", "logo-plugue.png"),
-    join(here, "..", "..", "assets", "logo-plugue.png"),
-    join(here, "..", "assets", "logo-plugue.png"),
-  ].filter(Boolean) as string[];
-  const path = candidates.find(existsSync);
-  if (!path) return null;
-  return `data:image/png;base64,${readFileSync(path).toString("base64")}`;
-}
 
 const moneyBR = (n: number) =>
   "R$ " + (n || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -85,7 +73,7 @@ const INTEL_CSS = `
 .health-meta { margin-top: 7px; font-size: 10.5px; color: #6b7280; }
 .channel-label {
   font-size: 10px; font-weight: 700; text-transform: uppercase;
-  color: #1A53F0; letter-spacing: .04em; margin-bottom: 4px;
+  color: var(--report-primary); letter-spacing: .04em; margin-bottom: 4px;
 }
 .kpi-grid-intel {
   display: grid; grid-template-columns: repeat(3, 1fr);
@@ -168,31 +156,24 @@ function renderHeader(
   periodo: string,
   nicho: string
 ): string {
-  const logoMarkup = logo
-    ? `<img src="${logo}" alt="Logo" />`
-    : `<div class="brand-fallback">Plugue</div>`;
-  return `<header>
-    <div class="brand">
-      ${logoMarkup}
-      <div class="brand-text">
-        <strong>Check-in</strong>
-        <span>${escapeHtml(tipo)}</span>
-      </div>
-    </div>
-    <div class="period">
-      <strong>${escapeHtml(cliente)}</strong><br />
-      ${escapeHtml(periodo)}<br />
-      Nicho: ${escapeHtml(nicho)}
-    </div>
-  </header>`;
+  return renderReportHeader({
+    category: "Inteligência de mídia",
+    description: tipo,
+    client: cliente,
+    period: periodo,
+    detail: `Nicho: ${nicho}`,
+    logo,
+  });
 }
 
 function renderFooter(page: number, total: number): string {
   const now = new Date().toLocaleDateString("pt-BR");
-  return `<div class="footer">
-    <span>Gerado por Plugue · ${now}</span>
-    <span>${page} / ${total}</span>
-  </div>`;
+  return renderReportFooter({
+    sourceLabel: "Plugue Marketing Solutions · Inteligência de mídia",
+    generatedAt: `Gerado em ${now}`,
+    page,
+    total,
+  });
 }
 
 function renderHealthBlock(
@@ -285,7 +266,7 @@ function renderInsufNote(insuf: string[]): string {
 // ─── Diagnóstico ──────────────────────────────────────────────────────────────
 
 export function renderDiagnosisHtml(result: DiagnosisResult): string {
-  const logo = logoDataUri();
+  const logo = reportLogoDataUri();
   const CANAL_LABEL: Record<string, string> = {
     meta: "Meta Ads", google: "Google Ads", integrated: "Integrado",
   };
@@ -321,7 +302,7 @@ export function renderDiagnosisHtml(result: DiagnosisResult): string {
 // ─── Auditoria ────────────────────────────────────────────────────────────────
 
 export function renderAnalysisHtml(result: AnalysisResult): string {
-  const logo = logoDataUri();
+  const logo = reportLogoDataUri();
   const CANAL_LABEL: Record<string, string> = {
     meta: "Meta Ads", google: "Google Ads", integrated: "Integrado",
   };

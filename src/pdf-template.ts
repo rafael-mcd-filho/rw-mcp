@@ -1,8 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { PdfReportModel } from "./report.js";
 import { moneyBR, intBR, pctBR } from "./format.js";
+import {
+  reportLogoDataUri,
+  renderReportFooter,
+  renderReportHeader,
+} from "./pdf-brand.js";
 import {
   BASE_REPORT_CSS,
   escapeHtml,
@@ -16,51 +18,26 @@ import {
   type TableColumn,
 } from "./pdf-components.js";
 
-const here = dirname(fileURLToPath(import.meta.url));
-
 type CampaignRow = PdfReportModel["campanhas"][number];
 type ObjectiveRow = PdfReportModel["objetivos"][number];
 
-function logoDataUri(): string | null {
-  const candidates = [
-    process.env.META_REPORT_LOGO,
-    join(here, "..", "..", "assets", "logo-plugue.png"),
-    join(here, "..", "assets", "logo-plugue.png"),
-  ].filter(Boolean) as string[];
-
-  const path = candidates.find((candidate) => existsSync(candidate));
-  if (!path) return null;
-
-  const encoded = readFileSync(path).toString("base64");
-  return `data:image/png;base64,${encoded}`;
-}
-
 function renderHeader(model: PdfReportModel, logo: string | null): string {
-  const logoMarkup = logo
-    ? `<img src="${logo}" alt="Logo" />`
-    : `<div class="brand-fallback">Plugue</div>`;
-
-  return `<header>
-    <div class="brand">
-      ${logoMarkup}
-      <div class="brand-text">
-        <strong>Check-in</strong>
-        <span>Relatório de performance</span>
-      </div>
-    </div>
-    <div class="period">
-      <strong>${escapeHtml(model.meta.clientName)}</strong><br />
-      ${escapeHtml(model.meta.periodLabel)}<br />
-      ${escapeHtml(model.meta.channels.join(" e "))}
-    </div>
-  </header>`;
+  return renderReportHeader({
+    category: "Check-in",
+    description: "Relatório de performance",
+    client: model.meta.clientName,
+    period: model.meta.periodLabel,
+    detail: model.meta.channels.join(" e "),
+    logo,
+  });
 }
 
 function renderFooter(model: PdfReportModel, page: number, total: number): string {
-  return `<div class="footer">
-    <span>${escapeHtml(model.meta.sourceLabel)}</span>
-    <span>${page} / ${total}</span>
-  </div>`;
+  return renderReportFooter({
+    sourceLabel: model.meta.sourceLabel,
+    page,
+    total,
+  });
 }
 
 function renderPage(
@@ -337,7 +314,7 @@ function pageTactical(model: PdfReportModel, logo: string | null, pageNum: numbe
 }
 
 export function renderPdfHtml(model: PdfReportModel): string {
-  const logo = logoDataUri();
+  const logo = reportLogoDataUri();
 
   let pages: string;
   if (model.kind === "integrated") {
@@ -399,7 +376,7 @@ export function renderIntegratedFullHtml(
   metaFragment: string,
   extraCss: string
 ): string {
-  const logo = logoDataUri();
+  const logo = reportLogoDataUri();
   const summary = pageOne(model, logo, 1);
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -415,7 +392,17 @@ export function renderIntegratedFullHtml(
   ${summary}
   ${googleFragment}
   ${metaFragment}
-  <script>window.__READY__ = true;</script>
+  <script>
+    (() => {
+      const pages = [...document.querySelectorAll(".page")];
+      pages.forEach((page, index) => {
+        page.dataset.page = String(index + 1);
+        const pageNumber = page.querySelector(".footer-page");
+        if (pageNumber) pageNumber.textContent = (index + 1) + " / " + pages.length;
+      });
+      window.__READY__ = true;
+    })();
+  </script>
 </body>
 </html>`;
 }

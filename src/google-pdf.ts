@@ -4,6 +4,7 @@
 
 import { moneyBR, intBR, pctBR, dateBR } from "./format.js";
 import { BASE_REPORT_CSS, escapeHtml } from "./pdf-components.js";
+import { renderReportFooter, renderReportHeader } from "./pdf-brand.js";
 import type { GoogleAdsEnhancedReport } from "./google-report.js";
 import type { GAdGroup, GDayData, GConversionAction, GDemographics } from "./google-ads-api.js";
 
@@ -73,7 +74,7 @@ export const GOOGLE_PDF_CSS = `
 .conv-table td { padding: 6px 7px; border-bottom: 1px solid #eef0f4; color: #252b36; font-variant-numeric: tabular-nums; }
 .conv-bar-wrap { display: flex; align-items: center; gap: 8px; }
 .conv-bar-track { flex: 1; height: 7px; background: #eceff3; border-radius: 999px; overflow: hidden; }
-.conv-bar-fill  { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#1A53F0,#0B2A6B); }
+.conv-bar-fill  { height: 100%; border-radius: 999px; background: linear-gradient(90deg,var(--report-primary),var(--report-navy)); }
 .g-section-title { font-size: 12px; font-weight: 750; color: #101216; margin: 14px 0 6px; text-transform: uppercase; letter-spacing: .5px; }
 .g-section-rule { border: none; border-top: 1px solid #e5e7eb; margin: 0 0 8px; }
 .note-row { font-size: 9px; color: #6b7280; font-style: italic; margin-top: 5px; }
@@ -88,32 +89,25 @@ function header(
   tipo: string,
   nicho?: string
 ): string {
-  const nichoTag = nicho ? `<span>Nicho: ${esc(nicho)}</span>` : "";
   return `
     <div class="topline"></div>
-    <header>
-      <div class="brand">
-        <div class="brand-text">
-          <strong>Plugue</strong>
-          <span>Marketing Solutions</span>
-        </div>
-      </div>
-      <div class="period">
-        <strong>${esc(tipo)}</strong><br>
-        <span>${esc(cliente)}</span><br>
-        <span>${esc(periodo)}</span>
-        ${nichoTag}
-      </div>
-    </header>`;
+    ${renderReportHeader({
+      category: "Google Ads",
+      description: tipo,
+      client: cliente,
+      period: periodo,
+      detail: nicho ? `Nicho: ${nicho}` : "Mídia de pesquisa e performance",
+    })}`;
 }
 
 function footer(cliente: string, periodo: string, page: number, total: number): string {
-  const now = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  return `
-    <div class="footer">
-      <span>Plugue Marketing Solutions · ${esc(cliente)} · ${esc(periodo)}</span>
-      <span>Gerado em ${now} · Página ${page}/${total}</span>
-    </div>`;
+  const now = new Date().toLocaleDateString("pt-BR");
+  return renderReportFooter({
+    sourceLabel: `Plugue Marketing Solutions · ${cliente} · ${periodo}`,
+    generatedAt: `Gerado em ${now}`,
+    page,
+    total,
+  });
 }
 
 function sectionTitle(title: string): string {
