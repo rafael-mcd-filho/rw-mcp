@@ -3,7 +3,7 @@
 // que inclui grupos de anúncio, keywords detalhadas, ações de conversão e demográficos.
 
 import { moneyBR, intBR, pctBR, dateBR } from "./format.js";
-import { BASE_REPORT_CSS, escapeHtml } from "./pdf-components.js";
+import { BASE_REPORT_CSS, escapeHtml, renderKpiGrid } from "./pdf-components.js";
 import { renderReportFooter, renderReportHeader } from "./pdf-brand.js";
 import type { GoogleAdsEnhancedReport } from "./google-report.js";
 import type { GAdGroup, GDayData, GConversionAction, GDemographics } from "./google-ads-api.js";
@@ -454,32 +454,45 @@ function page4(report: GoogleAdsEnhancedReport, profile: GoogleBusinessProfileRe
     <td>${esc(row.termo)}</td>
     <td class="num">${row.estimado ? "até " : ""}${int(row.impressoes)}</td>
   </tr>`).join("");
+  const performanceCards = renderKpiGrid([
+    { label: "Visualizações do perfil", value: int(m.visualizacoes_total), note: "Exibições na Busca e no Maps", tone: "red" },
+    { label: "Solicitações de rota", value: int(m.solicitacoes_rota), note: "Pessoas que pediram como chegar", tone: "black" },
+    { label: "Ligações", value: int(m.cliques_ligar), note: "Cliques no botão de telefone", tone: "black" },
+    { label: "Cliques no site", value: int(m.cliques_site), note: "Acessos iniciados pelo perfil", tone: "black" },
+  ]);
+  const reputationCards = renderKpiGrid([
+    { label: "Interações diretas", value: int(interactions), note: "Rotas, ligações, site e conversas", tone: "red" },
+    { label: "Nota média", value: a.nota_media ? a.nota_media.toFixed(1).replace(".", ",") : "—", note: `${int(a.total)} avaliações publicadas`, tone: "black" },
+    { label: "Novas avaliações", value: int(a.novas_no_periodo), note: "Recebidas no período", tone: "black" },
+    { label: "Taxa de resposta", value: pct(a.taxa_resposta), note: `${int(a.sem_resposta)} avaliações sem resposta`, tone: "black" },
+  ]);
 
   return `<div class="page compact-page">
     ${header(report.cliente ?? "Cliente", report.periodo, "Perfil da Empresa · Busca e Maps")}
-    <div class="kpi-grid">
-      <div class="kpi-card"><div class="kpi-label">Visualizações do perfil</div><div class="kpi-value">${int(m.visualizacoes_total)}</div><div class="kpi-note">Busca e Maps</div></div>
-      <div class="kpi-card"><div class="kpi-label">Solicitações de rota</div><div class="kpi-value">${int(m.solicitacoes_rota)}</div><div class="kpi-note">Intenção de visita</div></div>
-      <div class="kpi-card"><div class="kpi-label">Ligações</div><div class="kpi-value">${int(m.cliques_ligar)}</div><div class="kpi-note">Cliques para ligar</div></div>
-      <div class="kpi-card"><div class="kpi-label">Cliques no site</div><div class="kpi-value">${int(m.cliques_site)}</div><div class="kpi-note">A partir do perfil</div></div>
+    <div class="hero" style="padding-top:4px">
+      <h2>Como as pessoas encontraram e usaram o perfil</h2>
+      <p class="lead">Esta página mostra a presença da empresa nos resultados gratuitos do Google e as ações realizadas diretamente na ficha. Os dados ficam separados do Google Ads para evitar dupla contagem.</p>
     </div>
+    ${performanceCards}
     <div class="section" style="margin-top:14px">
       <p class="g-section-title">Onde o perfil apareceu</p><hr class="g-section-rule"/>
-      <div class="demog-section">
-        <div class="demog-block"><h4>Google Busca</h4><div style="font-size:25px;font-weight:800">${int(m.visualizacoes_busca)}</div><p class="note-row">Celular e computador.</p></div>
-        <div class="demog-block"><h4>Google Maps</h4><div style="font-size:25px;font-weight:800">${int(m.visualizacoes_maps)}</div><p class="note-row">Celular e computador.</p></div>
+      <div class="two-col">
+        <div class="panel">
+          <div style="font-size:10px;font-weight:800;color:var(--report-primary);text-transform:uppercase">Google Busca</div>
+          <div style="font-size:27px;font-weight:850;margin:7px 0 5px">${int(m.visualizacoes_busca)}</div>
+          <p>Vezes em que o Perfil da Empresa foi visualizado nos resultados da Pesquisa Google, em celulares e computadores.</p>
+        </div>
+        <div class="panel">
+          <div style="font-size:10px;font-weight:800;color:var(--report-primary);text-transform:uppercase">Google Maps</div>
+          <div style="font-size:27px;font-weight:850;margin:7px 0 5px">${int(m.visualizacoes_maps)}</div>
+          <p>Vezes em que o perfil foi visualizado enquanto as pessoas pesquisavam ou navegavam pelo Google Maps.</p>
+        </div>
       </div>
     </div>
     <div class="section" style="margin-top:14px">
       <p class="g-section-title">Interações e reputação</p><hr class="g-section-rule"/>
-      <table class="conv-table"><tbody>
-        <tr><td>Interações diretas no perfil</td><td class="num"><strong>${int(interactions)}</strong></td></tr>
-        <tr><td>Conversas iniciadas</td><td class="num">${int(m.conversas)}</td></tr>
-        <tr><td>Avaliações totais</td><td class="num">${int(a.total)}</td></tr>
-        <tr><td>Nota média</td><td class="num">${a.nota_media ? a.nota_media.toFixed(1).replace(".", ",") : "—"}</td></tr>
-        <tr><td>Novas avaliações no período</td><td class="num">${int(a.novas_no_periodo)}</td></tr>
-        <tr><td>Taxa de resposta</td><td class="num">${pct(a.taxa_resposta)}</td></tr>
-      </tbody></table>
+      ${reputationCards}
+      ${m.conversas > 0 ? `<p class="note-row">Conversas iniciadas diretamente pelo perfil: ${int(m.conversas)}.</p>` : ""}
     </div>
     <div class="section" style="margin-top:14px">
       <p class="g-section-title">Principais termos usados para encontrar o perfil</p><hr class="g-section-rule"/>
