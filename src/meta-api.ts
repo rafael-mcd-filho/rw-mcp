@@ -593,18 +593,28 @@ export class MetaAdsClient {
       if (!creativeId) return null;
 
       try {
-        const creative = await this.request<{ effective_instagram_story_id?: string }>(
+        const creative = await this.request<{
+          effective_instagram_story_id?: string;
+          source_instagram_media_id?: string;
+        }>(
           creativeId,
-          { fields: "effective_instagram_story_id" }
+          { fields: "effective_instagram_story_id,source_instagram_media_id" }
         );
-        const instagramStoryId = creative.effective_instagram_story_id;
-        if (instagramStoryId) {
-          const media = await this.request<{ permalink?: string }>(
-            instagramStoryId,
-            { fields: "permalink" }
-          );
-          if (media.permalink) {
-            return `${media.permalink.replace(/#.*$/, "").replace(/\/$/, "")}/#advertiser`;
+        const instagramMediaIds = [
+          creative.effective_instagram_story_id,
+          creative.source_instagram_media_id,
+        ].filter((id): id is string => Boolean(id));
+        for (const instagramMediaId of instagramMediaIds) {
+          try {
+            const media = await this.request<{ permalink?: string }>(
+              instagramMediaId,
+              { fields: "permalink" }
+            );
+            if (media.permalink) {
+              return `${media.permalink.replace(/#.*$/, "").replace(/\/$/, "")}/#advertiser`;
+            }
+          } catch {
+            // Tenta o próximo identificador disponível.
           }
         }
       } catch {
