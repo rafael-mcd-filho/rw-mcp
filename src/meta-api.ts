@@ -579,7 +579,10 @@ export class MetaAdsClient {
   }
 
   // Busca insights para um único período
-  /** URL clicável do preview oficial de um anúncio no feed. */
+  /**
+   * Link público do post do Instagram quando o anúncio usa uma publicação
+   * existente; para dark posts, usa o preview oficial da Meta como fallback.
+   */
   async getAdPreviewLink(adId: string): Promise<string | null> {
     try {
       const ad = await this.request<{ creative?: { id?: string } }>(
@@ -588,6 +591,26 @@ export class MetaAdsClient {
       );
       const creativeId = ad.creative?.id;
       if (!creativeId) return null;
+
+      try {
+        const creative = await this.request<{ effective_instagram_story_id?: string }>(
+          creativeId,
+          { fields: "effective_instagram_story_id" }
+        );
+        const instagramStoryId = creative.effective_instagram_story_id;
+        if (instagramStoryId) {
+          const media = await this.request<{ permalink?: string }>(
+            instagramStoryId,
+            { fields: "permalink" }
+          );
+          if (media.permalink) {
+            return `${media.permalink.replace(/#.*$/, "").replace(/\/$/, "")}/#advertiser`;
+          }
+        }
+      } catch {
+        // Dark posts e posts sem permissão não expõem permalink público.
+      }
+
       const previews = await this.requestPaged<{ body?: string }>(
         `${creativeId}/previews`,
         { ad_format: "DESKTOP_FEED_STANDARD" }
