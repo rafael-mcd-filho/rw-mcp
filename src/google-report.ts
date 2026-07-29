@@ -836,6 +836,19 @@ function metaPlatformResults(report?: MetaAccountReportLike): number {
   );
 }
 
+function googleConversionActionLabel(name: string): string {
+  const normalized = name.trim().toLowerCase();
+  const labels: Record<string, string> = {
+    "local actions - directions": "Solicitações de rota",
+    "local actions - website visits": "Visitas ao site",
+    "local actions - calls": "Ligações",
+    "local actions - menu views": "Visualizações do cardápio",
+    "local actions - orders": "Pedidos",
+    "calls from ads": "Ligações pelo anúncio",
+  };
+  return labels[normalized] ?? name;
+}
+
 function buildIntegratedMessage(
   report: IntegratedReport,
   googleConversionActions: GConversionAction[] = []
@@ -907,7 +920,7 @@ function buildIntegratedMessage(
     if (primaryActions.length > 0) {
       lines.push(``, `*Quais conversões:*`);
       for (const action of primaryActions.slice(0, 6)) {
-        lines.push(`• ${action.nome}: ${intBR(action.conversoes)}`);
+        lines.push(`• ${googleConversionActionLabel(action.nome)}: ${intBR(action.conversoes)}`);
       }
       if (primaryActions.length > 6) {
         const demais = primaryActions
