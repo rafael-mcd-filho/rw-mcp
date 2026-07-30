@@ -1189,7 +1189,7 @@ export async function getGoogleAdsPerformanceBreakdowns(
         : [];
       const names = new Map(constants.map(item => [
         String(item.geoTargetConstant?.id ?? ""),
-        item.geoTargetConstant?.canonicalName ?? item.geoTargetConstant?.name ?? "",
+        item.geoTargetConstant?.name ?? item.geoTargetConstant?.canonicalName ?? "",
       ]));
       return rows.map(r => {
         const city = r.segments?.geoTargetCity?.split("/").pop();
