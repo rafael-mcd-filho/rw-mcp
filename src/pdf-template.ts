@@ -378,11 +378,16 @@ export function renderIntegratedFullHtml(
 ): string {
   const logo = reportLogoDataUri();
   const summary = pageOne(model, logo, 1);
+  const channels = [
+    metaFragment.trim() ? "Meta" : "",
+    googleFragment.trim() ? "Google" : "",
+  ].filter(Boolean);
+  const documentTitle = `${model.cliente} - ${channels.join(" e ") || "Relatório"}`;
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtml(model.cliente)} - relatório combinado</title>
+  <title>${escapeHtml(documentTitle)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800;900&display=swap" rel="stylesheet" />

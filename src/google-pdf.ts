@@ -599,7 +599,7 @@ export function renderGoogleReportHtml(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Google Ads · ${escapeHtml(report.cliente ?? "Cliente")} · ${escapeHtml(report.periodo)}</title>
+<title>${escapeHtml(report.cliente ?? "Cliente")} - Google</title>
 <style>
 ${BASE_REPORT_CSS}
 ${GOOGLE_PDF_CSS}

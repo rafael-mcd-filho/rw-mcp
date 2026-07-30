@@ -740,7 +740,7 @@ export function renderMetaReportHtml(p: MetaPdfParams): string {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Meta Ads · ${esc(p.cliente)} · ${esc(p.periodo)}</title>
+<title>${esc(p.cliente)} - Meta</title>
 <style>
 ${BASE_REPORT_CSS}
 ${META_PDF_CSS}
