@@ -970,7 +970,7 @@ function buildIntegratedMessage(
   }
   if (google?.resumo.parcela_impressoes != null) {
     const g = google.resumo;
-    const impressionShare = g.parcela_impressoes;
+    const impressionShare = g.parcela_impressoes!;
     summaryFacts.push(
       `Google: presença em ${pctBR(impressionShare)} das oportunidades; perda por orçamento ${g.is_perdida_orcamento == null ? "indisponível" : pctBR(g.is_perdida_orcamento)} e por ranking ${g.is_perdida_rank == null ? "indisponível" : pctBR(g.is_perdida_rank)}; topo ${g.pct_impressoes_topo == null ? "indisponível" : pctBR(g.pct_impressoes_topo)}.`
     );
