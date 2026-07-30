@@ -185,6 +185,9 @@ function renderHealthBlock(
   canal: string
 ): string {
   const color = GRADE_COLOR[grade] ?? "#6b7280";
+  const healthMeta = canal === "Perfil da Empresa"
+    ? "Score próprio do canal local · não altera o score de mídia paga"
+    : `${moneyBR(gasto)} investidos · ${(conversoes || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} conversões`;
   return `<div>
     <div class="channel-label">${escapeHtml(canal)}</div>
     <div class="health-card">
@@ -195,7 +198,7 @@ function renderHealthBlock(
       <div>
         <div class="grade-badge" style="background:${color}">Nota ${escapeHtml(grade)}</div>
         <div class="grade-meaning">${escapeHtml(gradeSignificado)}</div>
-        <div class="health-meta">${moneyBR(gasto)} investidos · ${(conversoes || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} conversões</div>
+        <div class="health-meta">${escapeHtml(healthMeta)}</div>
       </div>
     </div>
   </div>`;
@@ -306,41 +309,107 @@ export function renderAnalysisHtml(result: AnalysisResult): string {
   const CANAL_LABEL: Record<string, string> = {
     meta: "Meta Ads", google: "Google Ads", integrated: "Integrado",
   };
-
-  const canal = result.canais[0] as ChannelAudit | undefined;
   const totalInsuf = [...new Set(result.canais.flatMap((c) => c.checks_insuficientes))];
-
-  const page1Body = `
+  const scoreCards = [
+    ...result.canais.map((channel) => ({
+      label: CANAL_LABEL[channel.channel] ?? channel.channel,
+      score: channel.score,
+      grade: channel.grade,
+      note: `${moneyBR(channel.gasto)} · desperdício ${moneyBR(channel.desperdicio_estimado)}`,
+    })),
+    ...(result.perfil_google ? [{
+      label: "Perfil da Empresa",
+      score: result.perfil_google.score,
+      grade: result.perfil_google.grade,
+      note: `${result.perfil_google.visualizacoes.toLocaleString("pt-BR")} visualizações · nota ${result.perfil_google.nota_media.toFixed(1).replace(".", ",")}`,
+    }] : []),
+  ];
+  const consolidatedCards = `<div class="kpi-grid" style="grid-template-columns:repeat(${Math.min(3, Math.max(1, scoreCards.length))},1fr);gap:8px;margin:12px 0">
+    ${scoreCards.map((card, index) => `<div class="kpi ${index % 2 ? "black" : "red"}">
+      <span>${escapeHtml(card.label)}</span>
+      <strong>${card.score}/100</strong>
+      <small>Nota ${card.grade} · ${escapeHtml(card.note)}</small>
+    </div>`).join("")}
+  </div>`;
+  const wasteByChannel = `<div class="kpi-grid" style="grid-template-columns:repeat(${Math.max(1, result.canais.length)},1fr);gap:8px;margin:8px 0">
+    ${result.canais.map((channel, index) => `<div class="kpi ${index % 2 ? "red" : "black"}">
+      <span>Desperdício estimado · ${escapeHtml(CANAL_LABEL[channel.channel] ?? channel.channel)}</span>
+      <strong>${moneyBR(result.desperdicio_por_canal[channel.channel] ?? 0)}</strong>
+      <small>Estimativa baseada nos alertas deste canal</small>
+    </div>`).join("")}
+  </div>`;
+  const summaryBody = `
     ${renderHealthBlock(
-      canal?.score ?? 0,
-      canal?.grade ?? "F",
-      canal?.grade_significado ?? "",
-      canal?.gasto ?? 0,
-      canal?.conversoes ?? 0,
-      CANAL_LABEL[canal?.channel ?? ""] ?? "Google Ads"
+      result.score_geral,
+      result.grade_geral,
+      result.grade_geral_significado,
+      result.canais.reduce((sum, channel) => sum + channel.gasto, 0),
+      result.canais.reduce((sum, channel) => sum + channel.conversoes, 0),
+      "Score geral de mídia paga"
     )}
-    ${renderKpis(canal?.kpis ?? [])}
-    <hr class="separator" />
-    ${renderAlerts(canal?.alertas ?? [], 6)}
-    ${renderWasteBox(result.desperdicio_estimado)}
+    ${consolidatedCards}
+    <h3>Desperdício estimado por canal</h3>
+    ${wasteByChannel}
+    ${renderAlerts(result.canais.flatMap(channel => channel.alertas), 4)}
   `;
 
-  const page2Body = `
-    ${renderCampaignVerdicts(canal?.campanhas ?? [])}
+  const pages: string[] = [summaryBody];
+  for (const channel of result.canais) {
+    pages.push(`
+      ${renderHealthBlock(
+        channel.score, channel.grade, channel.grade_significado,
+        channel.gasto, channel.conversoes, CANAL_LABEL[channel.channel] ?? channel.channel
+      )}
+      ${renderKpis(channel.kpis)}
+      ${renderAlerts(channel.alertas, 8)}
+      ${renderWasteBox(channel.desperdicio_estimado)}
+      ${renderInsufNote(channel.checks_insuficientes)}
+    `);
+    pages.push(`
+      ${renderCampaignVerdicts(channel.campanhas)}
+    `);
+    const layerPage = renderLayers(channel.layers);
+    if (layerPage) pages.push(layerPage);
+  }
+  if (result.perfil_google) {
+    const p = result.perfil_google;
+    const profileAlerts: Alert[] = p.alertas.map((alert, index) => ({
+      id: `gbp-${index}`, title: alert.title, severity: alert.severity,
+      status: alert.severity === "BAIXO" ? "ATENCAO" : "FAIL",
+      channel: "google", category: "perfil_google",
+      evidence: alert.evidence, recommendation: alert.recommendation,
+    }));
+    const profileMetrics = [
+      ["Visualizações", p.visualizacoes.toLocaleString("pt-BR"), `${p.busca.toLocaleString("pt-BR")} Busca · ${p.maps.toLocaleString("pt-BR")} Maps`],
+      ["Solicitações de rota", p.rotas.toLocaleString("pt-BR"), "Intenção de visita ao endereço"],
+      ["Ligações", p.ligacoes.toLocaleString("pt-BR"), "Cliques para ligar pelo perfil"],
+      ["Visitas ao site", p.cliques_site.toLocaleString("pt-BR"), "Cliques originados no perfil"],
+      ["Avaliações", p.avaliacoes.toLocaleString("pt-BR"), `${p.novas_avaliacoes.toLocaleString("pt-BR")} novas no período`],
+      ["Reputação", p.nota_media.toFixed(1).replace(".", ","), `Taxa de resposta ${p.taxa_resposta.toFixed(1).replace(".", ",")}%`],
+    ];
+    pages.push(`
+      ${renderHealthBlock(p.score, p.grade, p.grade_significado, 0, 0, "Perfil da Empresa")}
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0">
+        ${profileMetrics.map((item, index) => `<div class="kpi ${index % 2 ? "black" : "red"}"><span>${item[0]}</span><strong>${item[1]}</strong><small>${item[2]}</small></div>`).join("")}
+      </div>
+      ${renderAlerts(profileAlerts, 8)}
+      <div class="insuf-note">O score do Perfil da Empresa é separado do score de mídia paga.</div>
+    `);
+  }
+  pages.push(`
+    ${renderActionPlan(result.plano_de_acao)}
     <hr class="separator" />
     ${renderWasteByCategory(result.desperdicio_por_categoria)}
-    <hr class="separator" />
-    ${renderActionPlan(result.plano_de_acao)}
     ${renderInsufNote(totalInsuf)}
-  `;
-
-  const pages = [page1Body, page2Body];
-  const page3Body = renderLayers(canal?.layers ?? []);
-  if (page3Body) pages.push(page3Body);
+  `);
+  const channelTitle = [
+    result.canais.some(channel => channel.channel === "meta") ? "Meta" : "",
+    result.canais.some(channel => channel.channel === "google") ? "Google" : "",
+  ].filter(Boolean).join(" e ");
 
   return wrapDocument(
     logo,
-    "Análise",
+    `Auditoria ${channelTitle || "Digital"}`,
     result.cliente,
     result.periodo,
     result.nicho,
@@ -522,7 +591,7 @@ function wrapDocument(
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8" />
-<title>${escapeHtml(tipo)} — ${escapeHtml(cliente)}</title>
+<title>${escapeHtml(cliente)} - ${escapeHtml(tipo)}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
 ${BASE_REPORT_CSS}

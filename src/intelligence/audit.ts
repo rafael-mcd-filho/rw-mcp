@@ -42,10 +42,32 @@ export interface AnalysisResult {
   nicho: string;
   nicho_confianca: "alta" | "media" | "baixa";
   canais: ChannelAudit[];
+  score_geral: number;
+  grade_geral: "A" | "B" | "C" | "D" | "F";
+  grade_geral_significado: string;
+  desperdicio_por_canal: Record<string, number>;
   desperdicio_por_categoria: Record<string, number>;
   desperdicio_estimado: number;
   plano_de_acao: { urgente: string[]; esta_semana: string[]; este_mes: string[] };
   mensagem: string;
+  perfil_google?: BusinessProfileAudit;
+}
+
+export interface BusinessProfileAudit {
+  score: number;
+  grade: "A" | "B" | "C" | "D" | "F";
+  grade_significado: string;
+  visualizacoes: number;
+  busca: number;
+  maps: number;
+  rotas: number;
+  ligacoes: number;
+  cliques_site: number;
+  avaliacoes: number;
+  nota_media: number;
+  novas_avaliacoes: number;
+  taxa_resposta: number;
+  alertas: Array<{ title: string; evidence: string; recommendation: string; severity: Severity }>;
 }
 
 /** @deprecated diagnóstico e auditoria foram unificados — use AnalysisResult. */
@@ -139,6 +161,70 @@ function auditChannel(s: AccountSnapshot): ChannelAudit {
 
 const CHANNEL_LABEL: Record<Channel, string> = { meta: "Meta Ads", google: "Google Ads", integrated: "Integrado" };
 
+function gradeFromScore(score: number): "A" | "B" | "C" | "D" | "F" {
+  if (score >= 90) return "A";
+  if (score >= 75) return "B";
+  if (score >= 60) return "C";
+  if (score >= 40) return "D";
+  return "F";
+}
+
+export function auditBusinessProfile(profile: {
+  metricas: {
+    visualizacoes_total: number; visualizacoes_busca: number; visualizacoes_maps: number;
+    solicitacoes_rota: number; cliques_ligar: number; cliques_site: number;
+  };
+  avaliacoes: {
+    total: number; nota_media: number; novas_no_periodo: number; taxa_resposta: number;
+  };
+}): BusinessProfileAudit {
+  const alerts: BusinessProfileAudit["alertas"] = [];
+  let score = 100;
+  const interactions = profile.metricas.solicitacoes_rota + profile.metricas.cliques_ligar + profile.metricas.cliques_site;
+  if (profile.metricas.visualizacoes_total === 0) {
+    score -= 25;
+    alerts.push({ title: "Perfil sem visualizações", severity: "ALTO", evidence: "Nenhuma visualização foi registrada no período.", recommendation: "Revisar elegibilidade, categoria, endereço e visibilidade do perfil." });
+  }
+  if (interactions === 0) {
+    score -= 20;
+    alerts.push({ title: "Perfil sem ações", severity: "ALTO", evidence: "Não houve rotas, ligações ou visitas ao site.", recommendation: "Reforçar oferta, fotos, descrição, produtos/serviços e chamadas para ação." });
+  }
+  if (profile.avaliacoes.nota_media > 0 && profile.avaliacoes.nota_media < 4) {
+    score -= 20;
+    alerts.push({ title: "Reputação abaixo do ideal", severity: "ALTO", evidence: `Nota média ${profile.avaliacoes.nota_media.toFixed(1)}.`, recommendation: "Criar rotina de recuperação de clientes e solicitação de avaliações legítimas." });
+  } else if (profile.avaliacoes.nota_media > 0 && profile.avaliacoes.nota_media < 4.5) {
+    score -= 10;
+    alerts.push({ title: "Reputação pode melhorar", severity: "MEDIO", evidence: `Nota média ${profile.avaliacoes.nota_media.toFixed(1)}.`, recommendation: "Aumentar a cadência de avaliações recentes e responder feedbacks críticos." });
+  }
+  if (profile.avaliacoes.taxa_resposta < 50 && profile.avaliacoes.total > 0) {
+    score -= 15;
+    alerts.push({ title: "Baixa resposta às avaliações", severity: "ALTO", evidence: `Taxa de resposta ${profile.avaliacoes.taxa_resposta.toFixed(1)}%.`, recommendation: "Responder avaliações positivas e negativas com linguagem personalizada." });
+  } else if (profile.avaliacoes.taxa_resposta < 80 && profile.avaliacoes.total > 0) {
+    score -= 8;
+    alerts.push({ title: "Respostas às avaliações incompletas", severity: "MEDIO", evidence: `Taxa de resposta ${profile.avaliacoes.taxa_resposta.toFixed(1)}%.`, recommendation: "Buscar taxa de resposta superior a 80%." });
+  }
+  if (profile.avaliacoes.novas_no_periodo === 0) {
+    score -= 5;
+    alerts.push({ title: "Sem novas avaliações", severity: "BAIXO", evidence: "Nenhuma avaliação nova foi recebida no período.", recommendation: "Ativar uma rotina contínua de solicitação de avaliações após o atendimento." });
+  }
+  score = Math.max(0, Math.round(score));
+  const grade = gradeFromScore(score);
+  return {
+    score, grade, grade_significado: GRADE_MEANING[grade],
+    visualizacoes: profile.metricas.visualizacoes_total,
+    busca: profile.metricas.visualizacoes_busca,
+    maps: profile.metricas.visualizacoes_maps,
+    rotas: profile.metricas.solicitacoes_rota,
+    ligacoes: profile.metricas.cliques_ligar,
+    cliques_site: profile.metricas.cliques_site,
+    avaliacoes: profile.avaliacoes.total,
+    nota_media: profile.avaliacoes.nota_media,
+    novas_avaliacoes: profile.avaliacoes.novas_no_periodo,
+    taxa_resposta: profile.avaliacoes.taxa_resposta,
+    alertas: alerts,
+  };
+}
+
 export function buildAnalysis(input: {
   cliente: string;
   periodo: string;
@@ -156,6 +242,13 @@ export function buildAnalysis(input: {
     }
   }
   const desperdicio = round2(Object.values(desperdicioPorCategoria).reduce((acc, v) => acc + v, 0));
+  const desperdicioPorCanal = Object.fromEntries(
+    canais.map(c => [c.channel, round2(c.desperdicio_estimado)])
+  );
+  const scoreGeral = canais.length
+    ? Math.round(canais.reduce((sum, channel) => sum + channel.score, 0) / canais.length)
+    : 0;
+  const gradeGeral = gradeFromScore(scoreGeral);
 
   // Plano ordenado por R$ economizado dentro de cada bucket; prefixa o impacto.
   const planoItem = (a: Alert) =>
@@ -208,6 +301,10 @@ export function buildAnalysis(input: {
     nicho: input.nicho,
     nicho_confianca: input.nicho_confianca,
     canais,
+    score_geral: scoreGeral,
+    grade_geral: gradeGeral,
+    grade_geral_significado: GRADE_MEANING[gradeGeral],
+    desperdicio_por_canal: desperdicioPorCanal,
     desperdicio_por_categoria: desperdicioPorCategoria,
     desperdicio_estimado: desperdicio,
     plano_de_acao: plano,

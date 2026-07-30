@@ -18,9 +18,11 @@ import {
 import { findClient, clientsConfigured, clientContexto, type ClientRecord } from "../clients-db.js";
 import { resolveNiche } from "../intelligence/niche.js";
 import { googleSnapshot, metaSnapshot } from "../intelligence/snapshot.js";
-import { buildAnalysis } from "../intelligence/audit.js";
+import { auditBusinessProfile, buildAnalysis } from "../intelligence/audit.js";
 import type { AccountSnapshot } from "../intelligence/quality-gates.js";
 import { renderAnalysisHtml } from "../intelligence/intelligence-pdf.js";
+import { googleBusinessConfigured } from "../google-business-api.js";
+import { buildGoogleBusinessProfileReport } from "../google-business-report.js";
 
 function json(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
@@ -58,6 +60,7 @@ interface IntelArgs {
   preset?: string;
   incluir_meta?: boolean;
   incluir_google?: boolean;
+  incluir_perfil_google?: boolean;
 }
 
 const INTEL_SCHEMA = {
@@ -71,6 +74,7 @@ const INTEL_SCHEMA = {
   date_preset: z.string().optional().describe("Alternativa a since/until (ex.: last_7d, last_30d)."),
   incluir_meta: z.boolean().optional().describe("Se false, não busca Meta. Padrão: true (se houver ID)."),
   incluir_google: z.boolean().optional().describe("Se false, não busca Google. Padrão: true (se houver ID)."),
+  incluir_perfil_google: z.boolean().optional().describe("Se false, não audita o Perfil da Empresa. Padrão: true quando houver perfil com o mesmo nome do cliente."),
   formato: z.enum(["pdf", "html"]).optional().describe("'pdf' gera PDF para entrega (padrão ao informar este campo); 'html' gera dashboard navegável. Omita para retornar JSON."),
 };
 
@@ -81,6 +85,19 @@ function periodOf(a: IntelArgs) {
   const label = since && until ? `${since} a ${until}` : preset ?? "últimos 30 dias";
   const month = until ? Number(until.slice(5, 7)) : new Date().getMonth() + 1;
   return { since, until, preset, label, month: Number.isFinite(month) ? month : undefined };
+}
+
+function businessPeriod(a: IntelArgs): { since: string; until: string } {
+  const exact = periodOf(a);
+  if (exact.since && exact.until) return { since: exact.since, until: exact.until };
+  const days = exact.preset === "last_7d" ? 7 : exact.preset === "last_14d" ? 14 : 30;
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - (days - 1));
+  return {
+    since: start.toISOString().slice(0, 10),
+    until: end.toISOString().slice(0, 10),
+  };
 }
 
 async function resolveClient(a: IntelArgs): Promise<{
@@ -244,6 +261,17 @@ export function registerIntelligenceTools(server: McpServer, metaClient: MetaAds
       const result = buildAnalysis({
         cliente, periodo, nicho: nicho.label, nicho_confianca: nicho.confidence, snapshots,
       });
+      if ((args.incluir_perfil_google ?? true) && googleBusinessConfigured()) {
+        const range = businessPeriod(args);
+        const profile = await buildGoogleBusinessProfileReport(cliente, range.since, range.until).catch(() => undefined);
+        if (profile) {
+          result.perfil_google = auditBusinessProfile(profile);
+          result.mensagem +=
+            `\n\n*Perfil da Empresa* — Health Score ${result.perfil_google.score}/100 (${result.perfil_google.grade})` +
+            `\n${result.perfil_google.visualizacoes.toLocaleString("pt-BR")} visualizações · ` +
+            `${result.perfil_google.rotas.toLocaleString("pt-BR")} rotas · nota ${result.perfil_google.nota_media.toFixed(1).replace(".", ",")}.`;
+        }
+      }
       const fmt = formatoFrom(args as { formato?: string });
       if (fmt !== "json") {
         const html = renderAnalysisHtml(result);
@@ -261,7 +289,7 @@ export function registerIntelligenceTools(server: McpServer, metaClient: MetaAds
 
   server.tool(
     "get_client_analysis",
-    `Análise completa de um cliente (diagnóstico + auditoria unificados): Health Score (0–100, nota A–F), KPIs classificados por benchmark do nicho, alertas priorizados por impacto, desperdício em R$ (total e por categoria), veredito por campanha (MANTER/OTIMIZAR/PAUSAR) e plano de ação (urgente/esta semana/este mês). Responde "como está a conta e o que fazer?". Resolve nome_cliente automaticamente (Meta + Google). formato: omita p/ JSON (campo 'mensagem' = resumo curto p/ WhatsApp), 'pdf' p/ entrega, 'html' p/ dashboard navegável.`,
+    `Análise completa de um cliente (diagnóstico + auditoria unificados): score geral de mídia e score por canal, Meta Ads, Google Ads e Perfil da Empresa quando encontrado, KPIs por benchmark, alertas, desperdício separado por canal, veredito por campanha e plano de ação. Responde "como está a conta e o que fazer?". formato: omita para JSON, 'pdf' para entrega ou 'html' para dashboard.`,
     INTEL_SCHEMA,
     (args) => runAnalysis(args as IntelArgs)
   );

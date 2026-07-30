@@ -49,6 +49,7 @@ import {
 } from "./meta-pdf.js";
 import { renderIntegratedFullHtml } from "./pdf-template.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
+import { renderMetaComparisonHtml, type MetaAccountComparisonData } from "./meta-comparison-pdf.js";
 import { moneyBR, intBR, pctBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { getReferenciaMetaAds } from "./referencia.js";
@@ -1135,6 +1136,84 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       }
 
       return json(report);
+    }
+  );
+
+  const buildMetaAccountComparison = async (args: Record<string, unknown>): Promise<MetaAccountComparisonData> => {
+    const { since, until } = periodFrom(args);
+    const currentSince = requireValue(since, "since");
+    const currentUntil = requireValue(until, "until");
+    const compare = comparePeriodFrom(args);
+    const previousSince = requireValue(compare.since, "compare_since");
+    const previousUntil = requireValue(compare.until, "compare_until");
+    const accountId = accountIdFrom(args);
+    const [currentRows, previousRows] = await Promise.all([
+      client.getInsights({ level: "campaign", since: currentSince, until: currentUntil, accountId }),
+      client.getInsights({ level: "campaign", since: previousSince, until: previousUntil, accountId }),
+    ]);
+    let cliente = clientNameFrom(args);
+    if (!cliente) {
+      const account = await client.getAdAccount(accountId);
+      cliente = String(account.name ?? "Meta Ads");
+    }
+    const current = buildAccountReport(currentRows, `${currentSince} a ${currentUntil}`, cliente);
+    const previous = buildAccountReport(previousRows, `${previousSince} a ${previousUntil}`, cliente);
+    const conversionCategories = new Set(["lead_form", "messages", "sales"]);
+    const summarize = (report: typeof current) => {
+      const impressions = report.campanhas.reduce((sum, campaign) => sum + campaign.impressoes, 0);
+      const clicks = report.campanhas.reduce((sum, campaign) => sum + campaign.cliques, 0);
+      return {
+        gasto: report.totais.gasto,
+        resultados: report.campanhas.reduce(
+          (sum, campaign) => sum + (conversionCategories.has(campaign.categoria) ? campaign.resultado : 0),
+          0
+        ),
+        ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+        campanhas: report.campanhas.map(campaign => ({
+          nome: campaign.nome,
+          headlineLabel: campaign.headlineLabel,
+          gasto: campaign.gasto,
+          resultado: campaign.resultado,
+          custo: campaign.custo,
+          ctr: campaign.ctr,
+        })),
+      };
+    };
+    return {
+      cliente,
+      periodo_atual: `${currentSince} a ${currentUntil}`,
+      periodo_anterior: `${previousSince} a ${previousUntil}`,
+      atual: summarize(current),
+      anterior: summarize(previous),
+    };
+  };
+
+  server.tool(
+    "get_meta_ads_account_comparison",
+    "Comparativo Meta Ads da conta inteira entre dois períodos. Detecta o objetivo de cada campanha e compara investimento, resultados, CTR e campanhas.",
+    {
+      ...OPTIONAL_PERIOD_SCHEMA,
+      ...COMPARE_PERIOD_SCHEMA,
+      ...CLIENT_NAME_SCHEMA,
+      ...ACCOUNT_ID_SCHEMA,
+    },
+    async (args) => json(await buildMetaAccountComparison(args as Record<string, unknown>))
+  );
+
+  server.tool(
+    "generate_meta_ads_comparison_report_pdf",
+    "Gera PDF comparativo Meta Ads da conta inteira entre o período atual e o anterior, respeitando o objetivo de cada campanha.",
+    {
+      ...OPTIONAL_PERIOD_SCHEMA,
+      ...COMPARE_PERIOD_SCHEMA,
+      ...CLIENT_NAME_SCHEMA,
+      ...ACCOUNT_ID_SCHEMA,
+      ...FORMATO_SCHEMA,
+    },
+    async (args) => {
+      const comparison = await buildMetaAccountComparison(args as Record<string, unknown>);
+      const html = renderMetaComparisonHtml(comparison);
+      return renderHtmlPdfToolResponse(html, `${comparison.cliente} - Comparativo Meta`, formatoFrom(args));
     }
   );
 
