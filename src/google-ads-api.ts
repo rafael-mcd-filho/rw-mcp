@@ -1066,6 +1066,42 @@ function performanceRow(
   };
 }
 
+function localizedSegment(
+  dimension: "dispositivo" | "dia_semana" | "rede",
+  value: string
+): string {
+  const labels: Record<string, Record<string, string>> = {
+    dispositivo: {
+      MOBILE: "Celular",
+      DESKTOP: "Computador",
+      TABLET: "Tablet",
+      CONNECTED_TV: "TV conectada",
+      OTHER: "Outro",
+      UNKNOWN: "Não identificado",
+    },
+    dia_semana: {
+      MONDAY: "Segunda-feira",
+      TUESDAY: "Terça-feira",
+      WEDNESDAY: "Quarta-feira",
+      THURSDAY: "Quinta-feira",
+      FRIDAY: "Sexta-feira",
+      SATURDAY: "Sábado",
+      SUNDAY: "Domingo",
+      UNKNOWN: "Não identificado",
+    },
+    rede: {
+      SEARCH: "Pesquisa Google",
+      SEARCH_PARTNERS: "Parceiros de pesquisa",
+      CONTENT: "Rede de Display",
+      YOUTUBE_SEARCH: "Pesquisa do YouTube",
+      YOUTUBE_WATCH: "Vídeos do YouTube",
+      MIXED: "Rede mista",
+      UNKNOWN: "Não identificada",
+    },
+  };
+  return labels[dimension]?.[value] ?? value.replaceAll("_", " ");
+}
+
 /** Segmentações de performance usadas pela auditoria para encontrar outliers. */
 export async function getGoogleAdsPerformanceBreakdowns(
   customerId: string,
@@ -1087,7 +1123,11 @@ export async function getGoogleAdsPerformanceBreakdowns(
       SELECT segments.device, ${metricSelect}
       FROM campaign
       WHERE ${where} AND campaign.status != 'REMOVED'
-    `).then(rows => rows.map(r => performanceRow("dispositivo", r.segments?.device ?? "UNKNOWN", r.metrics ?? {}))),
+    `).then(rows => rows.map(r => performanceRow(
+      "dispositivo",
+      localizedSegment("dispositivo", r.segments?.device ?? "UNKNOWN"),
+      r.metrics ?? {}
+    ))),
     gaqlSearch<{
       segments: { dayOfWeek?: string };
       metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
@@ -1095,7 +1135,11 @@ export async function getGoogleAdsPerformanceBreakdowns(
       SELECT segments.day_of_week, ${metricSelect}
       FROM campaign
       WHERE ${where} AND campaign.status != 'REMOVED'
-    `).then(rows => rows.map(r => performanceRow("dia_semana", r.segments?.dayOfWeek ?? "UNKNOWN", r.metrics ?? {}))),
+    `).then(rows => rows.map(r => performanceRow(
+      "dia_semana",
+      localizedSegment("dia_semana", r.segments?.dayOfWeek ?? "UNKNOWN"),
+      r.metrics ?? {}
+    ))),
     gaqlSearch<{
       segments: { hour?: number };
       metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
@@ -1111,7 +1155,11 @@ export async function getGoogleAdsPerformanceBreakdowns(
       SELECT segments.ad_network_type, ${metricSelect}
       FROM campaign
       WHERE ${where} AND campaign.status != 'REMOVED'
-    `).then(rows => rows.map(r => performanceRow("rede", r.segments?.adNetworkType ?? "UNKNOWN", r.metrics ?? {}))),
+    `).then(rows => rows.map(r => performanceRow(
+      "rede",
+      localizedSegment("rede", r.segments?.adNetworkType ?? "UNKNOWN"),
+      r.metrics ?? {}
+    ))),
     gaqlSearch<{
       segments: { geoTargetCity?: string; geoTargetRegion?: string };
       metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
@@ -1122,11 +1170,35 @@ export async function getGoogleAdsPerformanceBreakdowns(
         ${metricSelect}
       FROM geographic_view
       WHERE ${where}
-    `).then(rows => rows.map(r => {
-      const city = r.segments?.geoTargetCity?.split("/").pop();
-      const region = r.segments?.geoTargetRegion?.split("/").pop();
-      return performanceRow("localizacao", city ? `Cidade ${city}` : region ? `Região ${region}` : "Local não identificado", r.metrics ?? {});
-    })),
+    `).then(async rows => {
+      const ids = [...new Set(rows.flatMap(r => [
+        r.segments?.geoTargetCity?.split("/").pop(),
+        r.segments?.geoTargetRegion?.split("/").pop(),
+      ]).filter((id): id is string => Boolean(id && /^\d+$/.test(id))))];
+      const constants = ids.length
+        ? await gaqlSearch<{
+            geoTargetConstant: { id?: string; name?: string; canonicalName?: string };
+          }>(customerId, `
+            SELECT
+              geo_target_constant.id,
+              geo_target_constant.name,
+              geo_target_constant.canonical_name
+            FROM geo_target_constant
+            WHERE geo_target_constant.id IN (${ids.join(",")})
+          `).catch(() => [])
+        : [];
+      const names = new Map(constants.map(item => [
+        String(item.geoTargetConstant?.id ?? ""),
+        item.geoTargetConstant?.canonicalName ?? item.geoTargetConstant?.name ?? "",
+      ]));
+      return rows.map(r => {
+        const city = r.segments?.geoTargetCity?.split("/").pop();
+        const region = r.segments?.geoTargetRegion?.split("/").pop();
+        const id = city ?? region;
+        const fallback = city ? `Cidade ${city}` : region ? `Região ${region}` : "Local não identificado";
+        return performanceRow("localizacao", (id && names.get(id)) || fallback, r.metrics ?? {});
+      });
+    }),
   ];
   const settled = await Promise.all(queries.map(query => query.catch(() => [])));
   return settled.flat().filter(row => row.impressoes > 0 || row.gasto > 0);
