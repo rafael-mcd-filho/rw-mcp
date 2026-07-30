@@ -280,6 +280,57 @@ Resultado medido em **"ThruPlays"** (vídeo assistido até ~15s/completo).
 
 ---
 
+## AGENDAMENTO DE HORÁRIO (dayparting) — aplicável a qualquer tipo de campanha
+
+Objetivo de negócio: veicular só numa janela de horário (ex.: 9h-14h todo dia) em vez das 24h.
+Campo é no **conjunto**, funciona junto com qualquer `optimization_goal`/objective dos 5 tipos
+acima. ✅ **Confirmado via `meta_update_object` em teste real** (Matuto CA01, `act_1562495634391386`,
+jul/2026) — comparando um conjunto criado manualmente no Gerenciador (que funcionou) com várias
+tentativas via API que falharam, todas com o mesmo erro.
+
+### ⚠️ A pegadinha (custou várias tentativas erradas)
+O erro `"Esta regularidade requer um campanha sem divisão do dia"` **não tem nada a ver** com
+`bid_strategy` (testado com e sem teto de lance), nem com CBO×ABO (testado os dois), nem com
+`objective`/`optimization_goal` da campanha (testado Engajamento, Alcance, Tráfego). A causa real:
+falta o campo `pacing_type`. Todo conjunto novo nasce com `pacing_type: ["standard"]`, e isso é
+**incompatível** com `adset_schedule` — precisa trocar para `["day_parting"]` **junto** na mesma
+chamada que manda o `adset_schedule`.
+
+### Campo do conjunto (via `meta_update_object`, ou direto no `create_adset` se a tool aceitar)
+| Campo | Valor | |
+|---|---|---|
+| `pacing_type` | `["day_parting"]` (não `["standard"]`) | ✅ ⚠️ **sem isso o `adset_schedule` é recusado**, não importa mais nada |
+| `adset_schedule` | array de blocos `{days, start_minute, end_minute, timezone_type}` | ✅ |
+| `adset_schedule[].days` | `0`=domingo … `6`=sábado. `[0,1,2,3,4,5,6]` = todos os dias | ✅ |
+| `adset_schedule[].start_minute` / `end_minute` | minutos desde 00h00 (9h=`540`, 14h=`840`, 15h=`900`) | 🔧 |
+| `adset_schedule[].timezone_type` | `"USER"` (fuso do visualizador — o que o Gerenciador usa por padrão) ou `"ADVERTISER"` (fuso da conta) | ✅ obrigatório em cada bloco, sem ele a API rejeita |
+| `start_time` / `end_time` | janela de datas do conjunto (obrigatório) | ✅ |
+
+Exemplo confirmado funcionando (lido de volta via `meta_get_object`):
+```json
+{
+  "adset_schedule": [
+    {"days": [0,1,2,3,4,5,6], "start_minute": 480, "end_minute": 900, "timezone_type": "USER"}
+  ],
+  "pacing_type": ["day_parting"]
+}
+```
+
+### ⚠️ Orçamento diário → vitalício NÃO dá pra converter num conjunto já existente
+Testado tentando trocar `daily_budget` por `lifetime_budget` via `update_object` num conjunto
+ativo (e numa cópia duplicada dele, que herda o tipo de orçamento do original) — API recusa:
+*"O orçamento atual é o recorrente. Não é permitido definir o novo orçamento como não recorrente."*
+**Tipo de orçamento é travado na criação.** Se o plano exige orçamento vitalício (ex.: pra usar
+dayparting com janela fechada de dias), o conjunto precisa nascer assim via `create_adset` — não
+dá pra pegar um conjunto/duplicata com orçamento diário e converter depois. Ver também
+[[meta-adset-campos-imutaveis]] (outros campos que travam na criação).
+
+**Não confirmado ainda:** se `adset_schedule` funciona com `daily_budget` (orçamento recorrente)
+em vez de `lifetime_budget` — o teste real só cobriu orçamento vitalício. Se for tentar com
+orçamento diário, validar num conjunto de teste pausado antes de aplicar em conta de cliente.
+
+---
+
 ## Cobertura
 
 Os 5 tipos acima cobrem todo o repertório ativo da operação: **Perfil, Alcance,
