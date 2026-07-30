@@ -33,6 +33,12 @@ const LABELS: Record<string, string> = {
   frequencia: "Frequência",
   quality_score: "Quality Score",
   impression_share: "Parcela de impressões",
+  cost_per_result: "Custo por resultado",
+  cost_per_thruplay: "Custo por ThruPlay",
+  result_rate: "Taxa de resultado",
+  video_completion_rate: "Conclusão após 25%",
+  cost_per_1000_reached: "Custo por mil pessoas alcançadas",
+  landing_rate: "Taxa de carregamento da página",
 };
 
 // ─── Faixas gerais por plataforma/objetivo ───────────────────────────────────
@@ -42,10 +48,15 @@ const BANDS: Record<string, Band> = {
   "meta:ctr:trafego": { direction: "higher_is_better", cuts: [0.8, 1.2, 2.0], reference: "0,8–2,0%" },
   "meta:ctr:leads": { direction: "higher_is_better", cuts: [1.2, 2.0, 3.2], reference: "1,2–3,2%" },
   "meta:ctr:vendas": { direction: "higher_is_better", cuts: [0.8, 1.5, 2.5], reference: "0,8–2,5%" },
+  "meta:ctr:traffic": { direction: "higher_is_better", cuts: [0.8, 1.2, 2.0], reference: "0,8–2,0%" },
+  "meta:ctr:lead_form": { direction: "higher_is_better", cuts: [1.2, 2.0, 3.2], reference: "1,2–3,2%" },
+  "meta:ctr:messages": { direction: "higher_is_better", cuts: [1.2, 2.0, 3.2], reference: "1,2–3,2%" },
+  "meta:ctr:sales": { direction: "higher_is_better", cuts: [0.8, 1.5, 2.5], reference: "0,8–2,5%" },
   "meta:ctr:default": { direction: "higher_is_better", cuts: [0.8, 1.2, 2.0], reference: "0,8–2,0%" },
   // Meta — CPC por objetivo
   "meta:cpc:trafego": { direction: "lower_is_better", cuts: [0.7, 1.8, 3.5], reference: "R$0,70–3,50" },
   "meta:cpc:leads": { direction: "lower_is_better", cuts: [2.0, 5.0, 10.0], reference: "R$2–10" },
+  "meta:cpc:traffic": { direction: "lower_is_better", cuts: [0.7, 1.8, 3.5], reference: "R$0,70–3,50" },
   "meta:cpc:default": { direction: "lower_is_better", cuts: [1.0, 3.0, 6.0], reference: "R$1–6" },
   // Meta — CPM / CPL / taxa conv / ROAS / frequência
   "meta:cpm:default": { direction: "lower_is_better", cuts: [10, 25, 45], reference: "R$10–45" },
@@ -53,6 +64,10 @@ const BANDS: Record<string, Band> = {
   "meta:taxa_conversao:default": { direction: "higher_is_better", cuts: [3, 5, 10], reference: "3–10%" },
   "meta:roas:default": { direction: "higher_is_better", cuts: [1.2, 2.0, 3.5], reference: "1,2–3,5" },
   "meta:frequencia:default": { direction: "lower_is_better", cuts: [2.5, 3.0, 5.0], reference: "até 2,5 (prospecção)" },
+  "meta:cost_per_thruplay:video": { direction: "lower_is_better", cuts: [0.03, 0.08, 0.18], reference: "R$0,03–0,18" },
+  "meta:video_completion_rate:video": { direction: "higher_is_better", cuts: [10, 20, 35], reference: "10–35%" },
+  "meta:cost_per_1000_reached:awareness": { direction: "lower_is_better", cuts: [8, 20, 40], reference: "R$8–40" },
+  "meta:landing_rate:traffic": { direction: "higher_is_better", cuts: [45, 65, 85], reference: "45–85%" },
 
   // Google — Search
   "google:ctr:default": { direction: "higher_is_better", cuts: [3.0, 5.0, 8.0], reference: "3–8% (Search)" },
@@ -128,7 +143,10 @@ export function seasonalityNote(month?: number): string | undefined {
   return `sazonalidade (${s.fator}): ${s.nota}`;
 }
 
-const COST_METRICS = new Set(["cpc", "cpm", "cpl", "frequencia"]);
+const COST_METRICS = new Set([
+  "cpc", "cpm", "cpl", "frequencia", "cost_per_result",
+  "cost_per_thruplay", "cost_per_1000_reached",
+]);
 
 // ─── Classificação ────────────────────────────────────────────────────────────
 
@@ -163,6 +181,21 @@ function levelFor(value: number, band: Band): PerformanceLevel {
   return "EXCELENTE";
 }
 
+function historicalBand(metric: string, baseline: number, direction: Direction): Band {
+  if (direction === "lower_is_better") {
+    return {
+      direction,
+      cuts: [baseline * 0.8, baseline * 1.05, baseline * 1.25],
+      reference: `histórico 28d: ${formatValue(metric, baseline)}`,
+    };
+  }
+  return {
+    direction,
+    cuts: [baseline * 0.7, baseline * 0.9, baseline * 1.1],
+    reference: `histórico 28d: ${formatValue(metric, baseline)}`,
+  };
+}
+
 /**
  * Classifica uma métrica contra o benchmark do contexto.
  * `metric`: ctr | cpc | cpm | cpl | taxa_conversao | roas | frequencia |
@@ -174,14 +207,19 @@ export function classifyMetric(
   value: number,
   ctx: ClassifyContext
 ): BenchmarkResult | undefined {
-  const band = resolveBand(metric, ctx);
+  const external = resolveBand(metric, ctx);
+  const baseline = ctx.history?.[metric];
+  const band =
+    baseline != null && baseline > 0 && external
+      ? historicalBand(metric, baseline, external.direction)
+      : external;
   if (!band) return undefined;
 
   const level = levelFor(value, band);
   const label = LABELS[metric] ?? metric;
   const season = COST_METRICS.has(metric) ? seasonalityNote(ctx.month) : undefined;
 
-  let rationale = `${label} ${formatValue(metric, value)} → ${level} (faixa ${band.reference}).`;
+  let rationale = `${label} ${formatValue(metric, value)} → ${level} (referência ${band.reference}).`;
   if (season && (level === "ATENCAO" || level === "CRITICO")) {
     rationale += ` Atenção à ${season} antes de alarmar custo.`;
   }
@@ -198,7 +236,14 @@ function fmt(n: number): string {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
 }
 function formatValue(metric: string, v: number): string {
-  if (metric === "ctr" || metric === "taxa_conversao" || metric === "impression_share") {
+  if (
+    metric === "ctr" ||
+    metric === "taxa_conversao" ||
+    metric === "impression_share" ||
+    metric === "result_rate" ||
+    metric === "video_completion_rate" ||
+    metric === "landing_rate"
+  ) {
     return `${fmt(v)}%`;
   }
   if (metric === "roas" || metric === "frequencia" || metric === "quality_score") {

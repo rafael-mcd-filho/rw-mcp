@@ -308,15 +308,18 @@ function diagnostics(category: ObjectiveCategory, a: Aggregated): string[] {
 // ─── Montagem da mensagem ─────────────────────────────────────────────────────
 
 function headlineValue(config: CategoryConfig, a: Aggregated): string {
-  return config.primaryMetric === "reach"
-    ? intBR(a.totalReach)
-    : intBR(a.totalConversoes);
+  if (config.primaryMetric === "reach") return intBR(a.totalReach);
+  if (config.primaryMetric === "thruplay") return intBR(a.totalThruplay);
+  return intBR(a.totalConversoes);
 }
 
 function costValue(config: CategoryConfig, a: Aggregated): string {
   if (config.primaryMetric === "reach") {
     const cpr = a.totalReach > 0 ? a.totalSpend / a.totalReach : 0;
     return moneyBR(cpr);
+  }
+  if (config.primaryMetric === "thruplay") {
+    return moneyBR(a.totalThruplay > 0 ? a.totalSpend / a.totalThruplay : 0);
   }
   return moneyBR(a.cpa);
 }
@@ -357,17 +360,27 @@ function buildComparisonMessage(
   const headlineDiff =
     config.primaryMetric === "reach"
       ? diff(atual.totalReach, anterior.totalReach)
+      : config.primaryMetric === "thruplay"
+      ? diff(atual.totalThruplay, anterior.totalThruplay)
       : diff(atual.totalConversoes, anterior.totalConversoes);
   const costAtual =
     config.primaryMetric === "reach"
       ? atual.totalReach > 0
         ? atual.totalSpend / atual.totalReach
         : 0
+      : config.primaryMetric === "thruplay"
+      ? atual.totalThruplay > 0
+        ? atual.totalSpend / atual.totalThruplay
+        : 0
       : atual.cpa;
   const costAnterior =
     config.primaryMetric === "reach"
       ? anterior.totalReach > 0
         ? anterior.totalSpend / anterior.totalReach
+        : 0
+      : config.primaryMetric === "thruplay"
+      ? anterior.totalThruplay > 0
+        ? anterior.totalSpend / anterior.totalThruplay
         : 0
       : anterior.cpa;
 
@@ -479,6 +492,12 @@ function campaignResult(config: CategoryConfig, a: Aggregated) {
   if (config.primaryMetric === "reach") {
     const cpr = a.totalReach > 0 ? a.totalSpend / a.totalReach : 0;
     return { valor: a.totalReach, custo: cpr };
+  }
+  if (config.primaryMetric === "thruplay") {
+    return {
+      valor: a.totalThruplay,
+      custo: a.totalThruplay > 0 ? a.totalSpend / a.totalThruplay : 0,
+    };
   }
   return { valor: a.totalConversoes, custo: a.cpa };
 }
@@ -634,7 +653,7 @@ export interface PdfCampaignRow {
   headlineLabel: string;
   costLabel: string;
   categoriaLabel: string;
-  primaryMetric: "conversion" | "reach";
+  primaryMetric: "conversion" | "reach" | "thruplay";
   gasto: number;
   resultado: number;
   custo: number;
@@ -655,7 +674,7 @@ export interface PdfObjectiveSummary {
   label: string;
   headlineLabel: string;
   costLabel: string;
-  primaryMetric: "conversion" | "reach";
+  primaryMetric: "conversion" | "reach" | "thruplay";
   campaignsCount: number;
   gasto: number;
   resultado: number;

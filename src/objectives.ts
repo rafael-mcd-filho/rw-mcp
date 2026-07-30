@@ -19,8 +19,10 @@ export type ObjectiveCategory =
   | "messages" // lead por mensagem / WhatsApp
   | "lead_form" // lead por formulário / site (pixel)
   | "sales"
+  | "traffic"
   | "profile" // perfil / seguidores
   | "engagement"
+  | "video"
   | "awareness"; // reconhecimento / autoridade
 
 export interface CategoryConfig {
@@ -34,7 +36,7 @@ export interface CategoryConfig {
   /** Ordem de preferência do action_type que conta como conversão. */
   actionPriority: string[];
   /** Se a métrica principal é uma conversão (actions) ou o alcance (reach). */
-  primaryMetric: "conversion" | "reach";
+  primaryMetric: "conversion" | "reach" | "thruplay";
   /** Observação fixa exibida na mensagem (ex.: aviso sobre seguidores). */
   footnote?: string;
 }
@@ -85,6 +87,15 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
     ],
     primaryMetric: "conversion",
   },
+  traffic: {
+    category: "traffic",
+    emoji: "🔗",
+    title: "Tráfego / Visitas ao site",
+    headlineLabel: "Visualizações da página",
+    costLabel: "Custo por LPV",
+    actionPriority: ["landing_page_view", "outbound_click", "link_click"],
+    primaryMetric: "conversion",
+  },
   profile: {
     category: "profile",
     emoji: "👤",
@@ -102,6 +113,15 @@ const CONFIGS: Record<ObjectiveCategory, CategoryConfig> = {
     costLabel: "Custo por engajamento",
     actionPriority: ["post_engagement", "page_engagement"],
     primaryMetric: "conversion",
+  },
+  video: {
+    category: "video",
+    emoji: "🎬",
+    title: "Visualizações de vídeo",
+    headlineLabel: "ThruPlays",
+    costLabel: "Custo por ThruPlay",
+    actionPriority: [],
+    primaryMetric: "thruplay",
   },
   awareness: {
     category: "awareness",
@@ -131,7 +151,9 @@ const NAME_RULES: Array<{ re: RegExp; category: ObjectiveCategory }> = [
   { re: /FORM/, category: "lead_form" },
   { re: /(WHATS|WPP|MSG|MENSAG)/, category: "messages" },
   { re: /(VENDA|SALE)/, category: "sales" },
+  { re: /(THRUPLAY|VIDEO|VÍDEO|VIEW)/, category: "video" },
   { re: /(SEGUIDOR|PERFIL|CRESCIMENTO)/, category: "profile" },
+  { re: /(TRAFEGO|TRÁFEGO|LPV|SITE|LINK)/, category: "traffic" },
   { re: /(RESERVA|LEAD)/, category: "lead_form" },
   { re: /(\bENG|ENGAJ|ENGAGE)/, category: "engagement" },
   { re: /(\bREC\b|RECONHEC|AUTORIDADE|ALCANCE|AWARENESS)/, category: "awareness" },
@@ -150,7 +172,8 @@ function fromMetaObjective(objective: string): ObjectiveCategory {
   if (/(SALES|CONVERSION|PURCHASE|CATALOG)/.test(o)) return "sales";
   if (/LEAD/.test(o)) return "lead_form";
   if (/(AWARENESS|REACH)/.test(o)) return "awareness";
-  if (/(TRAFFIC|LINK_CLICK)/.test(o)) return "profile";
+  if (/(VIDEO|THRUPLAY)/.test(o)) return "video";
+  if (/(TRAFFIC|LINK_CLICK)/.test(o)) return "traffic";
   if (/(MESSAGE|CONVERSATION)/.test(o)) return "messages";
   // OUTCOME_ENGAGEMENT, POST_ENGAGEMENT, etc.
   return "engagement";

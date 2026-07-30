@@ -18,6 +18,8 @@ export interface EntityFinding {
   parent?: string;
   gasto: number;
   conversoes: number;
+  resultado: number;
+  resultado_label: string;
   pior_nivel: PerformanceLevel;
   kpis: BenchmarkResult[];
   problemas: string[];
@@ -61,7 +63,16 @@ function entityKpis(e: GateCampaign, ctx: ClassifyContext): BenchmarkResult[] {
   push(classifyMetric("ctr", e.ctr, ctx));
   push(classifyMetric("cpc", e.cpc_medio, ctx));
   if (ctx.platform === "meta" && cpm != null) push(classifyMetric("cpm", cpm, ctx));
-  if (e.conversoes > 0) push(classifyMetric("cpl", e.custo_por_conversao, ctx));
+  if (e.primary_result > 0 && e.cost_per_result != null) {
+    const metric =
+      e.objective === "video"
+        ? "cost_per_thruplay"
+        : e.objective === "awareness"
+        ? "cost_per_1000_reached"
+        : "cpl";
+    const value = e.objective === "awareness" ? e.cost_per_result * 1000 : e.cost_per_result;
+    push(classifyMetric(metric, value, ctx));
+  }
   if (e.conversoes > 0 && taxa != null) push(classifyMetric("taxa_conversao", taxa, ctx));
   if (ctx.platform === "meta" && e.frequencia != null) push(classifyMetric("frequencia", e.frequencia, ctx));
   return out;
@@ -81,13 +92,17 @@ export function classifyEntity(e: GateCampaign, ctx: ClassifyContext): EntityFin
   const problemas = kpis
     .filter((k) => k.level === "CRITICO" || k.level === "ATENCAO")
     .map((k) => `${k.label} ${k.level === "CRITICO" ? "crítico" : "em atenção"} (${fmtVal(k)})`);
-  if (e.conversoes === 0 && e.gasto > 0) problemas.unshift("sem conversões no período");
+  if (e.primary_result === 0 && e.gasto > 0) {
+    problemas.unshift(`sem ${String(e.primary_result_label ?? "resultado principal").toLowerCase()} no período`);
+  }
   return {
     id: e.id,
     nome: e.nome,
     parent: e.parent,
     gasto: round2(e.gasto),
     conversoes: round2(e.conversoes),
+    resultado: round2(e.primary_result),
+    resultado_label: e.primary_result_label ?? "Resultados",
     pior_nivel: pior,
     kpis,
     problemas,
@@ -126,8 +141,8 @@ export function analyzeLayer(
     .slice(0, 4);
 
   const destaque = findings
-    .filter((f) => (f.pior_nivel === "BOM" || f.pior_nivel === "EXCELENTE") && f.conversoes > 0)
-    .sort((a, b) => b.conversoes - a.conversoes)[0];
+    .filter((f) => (f.pior_nivel === "BOM" || f.pior_nivel === "EXCELENTE") && f.resultado > 0)
+    .sort((a, b) => b.resultado - a.resultado)[0];
 
   return {
     layer,

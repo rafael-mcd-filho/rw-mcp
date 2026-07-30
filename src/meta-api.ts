@@ -72,6 +72,7 @@ export const INSIGHTS_FIELDS =
     "conversions",
     "cost_per_conversion",
     "purchase_roas",
+    "video_play_actions",
     "video_thruplay_watched_actions",
     "video_avg_time_watched_actions",
     "video_p25_watched_actions",
@@ -185,6 +186,7 @@ export interface Insight {
   conversions?: MetaActionMetric[];
   cost_per_conversion?: MetaActionMetric[];
   purchase_roas?: MetaActionMetric[];
+  video_play_actions?: MetaActionMetric[];
   video_thruplay_watched_actions?: MetaActionMetric[];
   video_avg_time_watched_actions?: MetaActionMetric[];
   video_p25_watched_actions?: MetaActionMetric[];

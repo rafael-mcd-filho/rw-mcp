@@ -220,6 +220,12 @@ export interface GCampaign {
   parcela_impressoes: string;
   pct_impressoes_topo?: number | null;
   pct_impressoes_topo_absoluto?: number | null;
+  parcela_impressoes_topo?: number | null;
+  parcela_impressoes_topo_absoluto?: number | null;
+  is_perdida_topo_orcamento?: number | null;
+  is_perdida_topo_rank?: number | null;
+  is_perdida_topo_absoluto_orcamento?: number | null;
+  is_perdida_topo_absoluto_rank?: number | null;
   parcela_cliques?: number | null;
   is_perdida_orcamento?: number | null; // % de IS perdida por orçamento (Search)
   is_perdida_rank?: number | null; // % de IS perdida por rank/qualidade (Search)
@@ -247,6 +253,8 @@ export interface GAccountReport {
     is_perdida_rank?: number | null;
     pct_impressoes_topo?: number | null;
     pct_impressoes_topo_absoluto?: number | null;
+    parcela_impressoes_topo?: number | null;
+    parcela_impressoes_topo_absoluto?: number | null;
     parcela_cliques?: number | null;
   };
   campanhas: GCampaign[];
@@ -267,6 +275,9 @@ export interface GKeyword {
   cpc_medio: number;
   custo_por_conversao: number;
   quality_score: number | null;
+  ctr_esperado?: string | null;
+  relevancia_anuncio?: string | null;
+  experiencia_pagina?: string | null;
 }
 
 export interface GDayData {
@@ -350,6 +361,12 @@ export async function getGoogleAdsCampaigns(
       searchRankLostImpressionShare: number | string;
       topImpressionPercentage: number | string;
       absoluteTopImpressionPercentage: number | string;
+      searchTopImpressionShare: number | string;
+      searchAbsoluteTopImpressionShare: number | string;
+      searchBudgetLostTopImpressionShare: number | string;
+      searchRankLostTopImpressionShare: number | string;
+      searchBudgetLostAbsoluteTopImpressionShare: number | string;
+      searchRankLostAbsoluteTopImpressionShare: number | string;
       searchClickShare: number | string;
     };
   }>(customerId, `
@@ -376,6 +393,12 @@ export async function getGoogleAdsCampaigns(
       metrics.search_rank_lost_impression_share
       ,metrics.top_impression_percentage
       ,metrics.absolute_top_impression_percentage
+      ,metrics.search_top_impression_share
+      ,metrics.search_absolute_top_impression_share
+      ,metrics.search_budget_lost_top_impression_share
+      ,metrics.search_rank_lost_top_impression_share
+      ,metrics.search_budget_lost_absolute_top_impression_share
+      ,metrics.search_rank_lost_absolute_top_impression_share
       ,metrics.search_click_share
     FROM campaign
     WHERE ${where}
@@ -410,6 +433,12 @@ export async function getGoogleAdsCampaigns(
       is_perdida_rank: pctOrNull(r.metrics?.searchRankLostImpressionShare),
       pct_impressoes_topo: pctOrNull(r.metrics?.topImpressionPercentage),
       pct_impressoes_topo_absoluto: pctOrNull(r.metrics?.absoluteTopImpressionPercentage),
+      parcela_impressoes_topo: pctOrNull(r.metrics?.searchTopImpressionShare),
+      parcela_impressoes_topo_absoluto: pctOrNull(r.metrics?.searchAbsoluteTopImpressionShare),
+      is_perdida_topo_orcamento: pctOrNull(r.metrics?.searchBudgetLostTopImpressionShare),
+      is_perdida_topo_rank: pctOrNull(r.metrics?.searchRankLostTopImpressionShare),
+      is_perdida_topo_absoluto_orcamento: pctOrNull(r.metrics?.searchBudgetLostAbsoluteTopImpressionShare),
+      is_perdida_topo_absoluto_rank: pctOrNull(r.metrics?.searchRankLostAbsoluteTopImpressionShare),
       parcela_cliques: pctOrNull(r.metrics?.searchClickShare),
       rede_pesquisa_google: r.campaign?.networkSettings?.targetGoogleSearch ?? false,
       rede_parceiros_pesquisa: r.campaign?.networkSettings?.targetSearchNetwork ?? false,
@@ -470,6 +499,12 @@ export async function getGoogleAdsAccountReport(
   const pctImpressoesTopoAbsoluto = weightedSearchMetric(
     campaign => campaign.pct_impressoes_topo_absoluto ?? null
   );
+  const parcelaImpressoesTopo = weightedSearchMetric(
+    campaign => campaign.parcela_impressoes_topo ?? null
+  );
+  const parcelaImpressoesTopoAbsoluto = weightedSearchMetric(
+    campaign => campaign.parcela_impressoes_topo_absoluto ?? null
+  );
   const parcelaCliques = weightedSearchMetric(
     campaign => campaign.parcela_cliques ?? null
   );
@@ -491,6 +526,8 @@ export async function getGoogleAdsAccountReport(
       is_perdida_rank: isPerdidaRank,
       pct_impressoes_topo: pctImpressoesTopo,
       pct_impressoes_topo_absoluto: pctImpressoesTopoAbsoluto,
+      parcela_impressoes_topo: parcelaImpressoesTopo,
+      parcela_impressoes_topo_absoluto: parcelaImpressoesTopoAbsoluto,
       parcela_cliques: parcelaCliques,
     },
     campanhas,
@@ -510,7 +547,12 @@ export async function getGoogleAdsKeywords(
     adGroupCriterion: {
       criterionId: string;
       keyword: { text: string; matchType: string };
-      qualityInfo?: { qualityScore?: number };
+      qualityInfo?: {
+        qualityScore?: number;
+        creativeQualityScore?: string;
+        postClickQualityScore?: string;
+        searchPredictedCtr?: string;
+      };
     };
     adGroup: { id: string; name: string };
     campaign: { name: string };
@@ -529,6 +571,9 @@ export async function getGoogleAdsKeywords(
       ad_group_criterion.keyword.text,
       ad_group_criterion.keyword.match_type,
       ad_group_criterion.quality_info.quality_score,
+      ad_group_criterion.quality_info.creative_quality_score,
+      ad_group_criterion.quality_info.post_click_quality_score,
+      ad_group_criterion.quality_info.search_predicted_ctr,
       ad_group.id,
       ad_group.name,
       campaign.name,
@@ -563,6 +608,9 @@ export async function getGoogleAdsKeywords(
     cpc_medio: micros(r.metrics?.averageCpc ?? "0"),
     custo_por_conversao: micros(r.metrics?.costPerConversion ?? "0"),
     quality_score: r.adGroupCriterion?.qualityInfo?.qualityScore ?? null,
+    ctr_esperado: r.adGroupCriterion?.qualityInfo?.searchPredictedCtr ?? null,
+    relevancia_anuncio: r.adGroupCriterion?.qualityInfo?.creativeQualityScore ?? null,
+    experiencia_pagina: r.adGroupCriterion?.qualityInfo?.postClickQualityScore ?? null,
   }));
 }
 
@@ -972,6 +1020,171 @@ export async function getGoogleAdsHourlyBreakdown(
   });
 }
 
+export interface GPerformanceSegment {
+  dimensao: "dispositivo" | "dia_semana" | "hora" | "rede" | "localizacao";
+  segmento: string;
+  gasto: number;
+  impressoes: number;
+  cliques: number;
+  conversoes: number;
+  ctr: number;
+  cpc: number;
+  taxa_conversao: number;
+  cpa: number | null;
+}
+
+export interface GAuctionInsight {
+  dominio: string;
+  parcela_impressoes: number | null;
+  sobreposicao: number | null;
+  acima_da_posicao: number | null;
+  topo: number | null;
+  topo_absoluto: number | null;
+  superacao: number | null;
+}
+
+function performanceRow(
+  dimensao: GPerformanceSegment["dimensao"],
+  segmento: string,
+  metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string }
+): GPerformanceSegment {
+  const gasto = micros(metrics?.costMicros ?? "0");
+  const impressoes = safeInt(metrics?.impressions);
+  const cliques = safeInt(metrics?.clicks);
+  const conversoes = r2(safeFloat(metrics?.conversions));
+  return {
+    dimensao,
+    segmento,
+    gasto,
+    impressoes,
+    cliques,
+    conversoes,
+    ctr: impressoes > 0 ? r2((cliques / impressoes) * 100) : 0,
+    cpc: cliques > 0 ? r2(gasto / cliques) : 0,
+    taxa_conversao: cliques > 0 ? r2((conversoes / cliques) * 100) : 0,
+    cpa: conversoes > 0 ? r2(gasto / conversoes) : null,
+  };
+}
+
+/** Segmentações de performance usadas pela auditoria para encontrar outliers. */
+export async function getGoogleAdsPerformanceBreakdowns(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GPerformanceSegment[]> {
+  const where = dateClause(since, until, preset);
+  const metricSelect = `
+      metrics.cost_micros,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.conversions`;
+  const queries: Array<Promise<GPerformanceSegment[]>> = [
+    gaqlSearch<{
+      segments: { device?: string };
+      metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
+    }>(customerId, `
+      SELECT segments.device, ${metricSelect}
+      FROM campaign
+      WHERE ${where} AND campaign.status != 'REMOVED'
+    `).then(rows => rows.map(r => performanceRow("dispositivo", r.segments?.device ?? "UNKNOWN", r.metrics ?? {}))),
+    gaqlSearch<{
+      segments: { dayOfWeek?: string };
+      metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
+    }>(customerId, `
+      SELECT segments.day_of_week, ${metricSelect}
+      FROM campaign
+      WHERE ${where} AND campaign.status != 'REMOVED'
+    `).then(rows => rows.map(r => performanceRow("dia_semana", r.segments?.dayOfWeek ?? "UNKNOWN", r.metrics ?? {}))),
+    gaqlSearch<{
+      segments: { hour?: number };
+      metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
+    }>(customerId, `
+      SELECT segments.hour, ${metricSelect}
+      FROM campaign
+      WHERE ${where} AND campaign.status != 'REMOVED'
+    `).then(rows => rows.map(r => performanceRow("hora", `${r.segments?.hour ?? 0}h`, r.metrics ?? {}))),
+    gaqlSearch<{
+      segments: { adNetworkType?: string };
+      metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
+    }>(customerId, `
+      SELECT segments.ad_network_type, ${metricSelect}
+      FROM campaign
+      WHERE ${where} AND campaign.status != 'REMOVED'
+    `).then(rows => rows.map(r => performanceRow("rede", r.segments?.adNetworkType ?? "UNKNOWN", r.metrics ?? {}))),
+    gaqlSearch<{
+      segments: { geoTargetCity?: string; geoTargetRegion?: string };
+      metrics: { costMicros?: string; impressions?: string; clicks?: string; conversions?: string };
+    }>(customerId, `
+      SELECT
+        segments.geo_target_city,
+        segments.geo_target_region,
+        ${metricSelect}
+      FROM geographic_view
+      WHERE ${where}
+    `).then(rows => rows.map(r => {
+      const city = r.segments?.geoTargetCity?.split("/").pop();
+      const region = r.segments?.geoTargetRegion?.split("/").pop();
+      return performanceRow("localizacao", city ? `Cidade ${city}` : region ? `Região ${region}` : "Local não identificado", r.metrics ?? {});
+    })),
+  ];
+  const settled = await Promise.all(queries.map(query => query.catch(() => [])));
+  return settled.flat().filter(row => row.impressoes > 0 || row.gasto > 0);
+}
+
+/**
+ * Auction Insights em modo best-effort. Algumas contas/versões não liberam
+ * estas métricas via API; nesse caso retorna [] e a auditoria declara a lacuna.
+ */
+export async function getGoogleAdsAuctionInsights(
+  customerId: string,
+  since?: string,
+  until?: string,
+  preset?: string
+): Promise<GAuctionInsight[]> {
+  const where = dateClause(since, until, preset);
+  const pct = (value?: number | string | null): number | null => {
+    if (value == null || value === "") return null;
+    return r2(safeFloat(value) * 100);
+  };
+  try {
+    const rows = await gaqlSearch<{
+      segments: { auctionInsightDomain?: string };
+      metrics: {
+        auctionInsightSearchImpressionShare?: number | string;
+        auctionInsightSearchOverlapRate?: number | string;
+        auctionInsightSearchPositionAboveRate?: number | string;
+        auctionInsightSearchTopImpressionPercentage?: number | string;
+        auctionInsightSearchAbsoluteTopImpressionPercentage?: number | string;
+        auctionInsightSearchOutrankingShare?: number | string;
+      };
+    }>(customerId, `
+      SELECT
+        segments.auction_insight_domain,
+        metrics.auction_insight_search_impression_share,
+        metrics.auction_insight_search_overlap_rate,
+        metrics.auction_insight_search_position_above_rate,
+        metrics.auction_insight_search_top_impression_percentage,
+        metrics.auction_insight_search_absolute_top_impression_percentage,
+        metrics.auction_insight_search_outranking_share
+      FROM campaign
+      WHERE ${where}
+        AND campaign.status != 'REMOVED'
+    `);
+    return rows.map(row => ({
+      dominio: row.segments?.auctionInsightDomain ?? "(não identificado)",
+      parcela_impressoes: pct(row.metrics?.auctionInsightSearchImpressionShare),
+      sobreposicao: pct(row.metrics?.auctionInsightSearchOverlapRate),
+      acima_da_posicao: pct(row.metrics?.auctionInsightSearchPositionAboveRate),
+      topo: pct(row.metrics?.auctionInsightSearchTopImpressionPercentage),
+      topo_absoluto: pct(row.metrics?.auctionInsightSearchAbsoluteTopImpressionPercentage),
+      superacao: pct(row.metrics?.auctionInsightSearchOutrankingShare),
+    })).filter(row => row.dominio !== "(não identificado)");
+  } catch {
+    return [];
+  }
+}
+
 // ─── Keyword Planner ─────────────────────────────────────────────────────────
 
 export interface GKeywordIdea {
@@ -1056,6 +1269,14 @@ export interface GConversionAction {
   nome: string;
   conversoes: number;
   todas_conversoes: number;
+  status?: string;
+  categoria?: string;
+  origem?: string;
+  tipo?: string;
+  primaria?: boolean;
+  incluir_em_conversoes?: boolean;
+  contagem?: string;
+  modelo_atribuicao?: string;
 }
 
 export async function getGoogleAdsConversionActions(
@@ -1089,11 +1310,47 @@ export async function getGoogleAdsConversionActions(
       byName[nome].todas += safeFloat(r.metrics?.allConversions);
     }
 
+    const configs = await gaqlSearch<{
+      conversionAction: {
+        name: string;
+        status?: string;
+        category?: string;
+        origin?: string;
+        type?: string;
+        primaryForGoal?: boolean;
+        includeInConversionsMetric?: boolean;
+        countingType?: string;
+        attributionModelSettings?: { attributionModel?: string };
+      };
+    }>(customerId, `
+      SELECT
+        conversion_action.name,
+        conversion_action.status,
+        conversion_action.category,
+        conversion_action.origin,
+        conversion_action.type,
+        conversion_action.primary_for_goal,
+        conversion_action.include_in_conversions_metric,
+        conversion_action.counting_type,
+        conversion_action.attribution_model_settings.attribution_model
+      FROM conversion_action
+      WHERE conversion_action.status != 'REMOVED'
+    `).catch(() => []);
+    const configByName = new Map(configs.map((row) => [row.conversionAction?.name ?? "", row.conversionAction]));
+
     return Object.entries(byName)
       .map(([nome, v]) => ({
         nome,
         conversoes: r2(v.conversoes),
         todas_conversoes: r2(v.todas),
+        status: configByName.get(nome)?.status,
+        categoria: configByName.get(nome)?.category,
+        origem: configByName.get(nome)?.origin,
+        tipo: configByName.get(nome)?.type,
+        primaria: configByName.get(nome)?.primaryForGoal,
+        incluir_em_conversoes: configByName.get(nome)?.includeInConversionsMetric,
+        contagem: configByName.get(nome)?.countingType,
+        modelo_atribuicao: configByName.get(nome)?.attributionModelSettings?.attributionModel,
       }))
       .filter((x) => x.todas_conversoes > 0)
       .sort((a, b) => b.todas_conversoes - a.todas_conversoes);

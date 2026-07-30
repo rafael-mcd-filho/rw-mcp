@@ -14,6 +14,9 @@ import {
   getGoogleAdsSearchTerms,
   getGoogleAdsAdGroups,
   getGoogleAdsAds,
+  getGoogleAdsConversionActions,
+  getGoogleAdsPerformanceBreakdowns,
+  getGoogleAdsAuctionInsights,
 } from "../google-ads-api.js";
 import { findClient, clientsConfigured, clientContexto, type ClientRecord } from "../clients-db.js";
 import { resolveNiche } from "../intelligence/niche.js";
@@ -89,6 +92,61 @@ function periodOf(a: IntelArgs) {
   return { since, until, preset, label, month: Number.isFinite(month) ? month : undefined };
 }
 
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(value: string, days: number): string {
+  const date = new Date(`${value}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return isoDate(date);
+}
+
+function resolvedPeriods(a: IntelArgs): {
+  current: { since?: string; until?: string; preset?: string };
+  previous?: { since: string; until: string };
+  baseline28?: { since: string; until: string };
+} {
+  const current = periodOf(a);
+  let since = current.since;
+  let until = current.until;
+  if (!since || !until) {
+    const presetDays: Record<string, number> = {
+      last_7d: 7,
+      last_14d: 14,
+      last_28d: 28,
+      last_30d: 30,
+      last_90d: 90,
+      yesterday: 1,
+    };
+    const days = presetDays[current.preset ?? ""];
+    if (days) {
+      const end = new Date();
+      if (current.preset === "yesterday") end.setUTCDate(end.getUTCDate() - 1);
+      until = isoDate(end);
+      since = addDays(until, -(days - 1));
+    }
+  }
+  if (!since || !until) {
+    return { current: { since: current.since, until: current.until, preset: current.preset } };
+  }
+  const duration = Math.max(
+    1,
+    Math.round((new Date(`${until}T12:00:00Z`).getTime() - new Date(`${since}T12:00:00Z`).getTime()) / 86_400_000) + 1
+  );
+  return {
+    current: { since, until, preset: undefined },
+    previous: {
+      since: addDays(since, -duration),
+      until: addDays(since, -1),
+    },
+    baseline28: {
+      since: addDays(until, -27),
+      until,
+    },
+  };
+}
+
 function businessPeriod(a: IntelArgs): { since: string; until: string } {
   const exact = periodOf(a);
   if (exact.since && exact.until) return { since: exact.since, until: exact.until };
@@ -118,7 +176,12 @@ async function resolveClient(a: IntelArgs): Promise<{
   }
   const metaId = scalar(a.meta_account_id ?? a.id_conta_meta_ads) ?? record?.id_conta_meta_ads;
   const googleId = onlyDigits(a.google_customer_id ?? a.id_conta_google ?? record?.id_conta_google);
-  const contexto = scalar(a.contexto_cliente) ?? clientContexto(record);
+  const contexto =
+    scalar(a.contexto_cliente) ??
+    clientContexto(record) ??
+    record?.nome_cliente ??
+    displayName ??
+    nome;
   return {
     cliente: record?.nome_cliente ?? displayName ?? nome ?? "Cliente",
     metaId: metaId || undefined,
@@ -135,6 +198,7 @@ async function buildSnapshots(
 ): Promise<{ cliente: string; periodo: string; nicho: ReturnType<typeof resolveNiche>; snapshots: AccountSnapshot[]; avisos: string[] }> {
   const { cliente, metaId, googleId, contexto, record } = await resolveClient(a);
   const { since, until, preset, label, month } = periodOf(a);
+  const periods = resolvedPeriods(a);
   // Preferência: nicho forçado no argumento → nicho da IA (n8n) → contexto livre.
   const niche = resolveNiche(scalar(a.nicho) ?? record?.nicho, contexto);
 
@@ -145,13 +209,42 @@ async function buildSnapshots(
 
   if (wantsMeta && metaId) {
     try {
-      const [rows, adsetRows, adRows] = await Promise.all([
+      const [
+        rows, adsetRows, adRows,
+        previousRows, previousAdRows, baselineRows,
+      ] = await Promise.all([
         metaClient.getInsights({ level: "campaign", since, until, datePreset: preset, accountId: metaId }),
         metaClient.getInsights({ level: "adset", since, until, datePreset: preset, accountId: metaId }).catch(() => []),
         metaClient.getInsights({ level: "ad", since, until, datePreset: preset, accountId: metaId }).catch(() => []),
+        periods.previous
+          ? metaClient.getInsights({ level: "campaign", since: periods.previous.since, until: periods.previous.until, accountId: metaId }).catch(() => [])
+          : Promise.resolve([]),
+        periods.previous
+          ? metaClient.getInsights({ level: "ad", since: periods.previous.since, until: periods.previous.until, accountId: metaId }).catch(() => [])
+          : Promise.resolve([]),
+        periods.baseline28
+          ? metaClient.getInsights({ level: "campaign", since: periods.baseline28.since, until: periods.baseline28.until, accountId: metaId }).catch(() => [])
+          : Promise.resolve([]),
       ]);
       const account = buildAccountReport(rows, label);
-      snapshots.push(metaSnapshot(account as Parameters<typeof metaSnapshot>[0], { niche: niche.niche, month, adsets: adsetRows, ads: adRows }));
+      const previousAccount = previousRows.length
+        ? buildAccountReport(previousRows, `${periods.previous?.since} a ${periods.previous?.until}`)
+        : undefined;
+      const baselineAccount = baselineRows.length
+        ? buildAccountReport(baselineRows, `${periods.baseline28?.since} a ${periods.baseline28?.until}`)
+        : undefined;
+      snapshots.push(metaSnapshot(account as Parameters<typeof metaSnapshot>[0], {
+        niche: niche.niche,
+        month,
+        rawCampaigns: rows,
+        adsets: adsetRows,
+        ads: adRows,
+        previousAccount: previousAccount as Parameters<typeof metaSnapshot>[1]["previousAccount"],
+        previousCampaigns: previousRows,
+        previousAds: previousAdRows,
+        baselineAccount: baselineAccount as Parameters<typeof metaSnapshot>[1]["baselineAccount"],
+        baselineCampaigns: baselineRows,
+      }));
     } catch (e) {
       avisos.push(`Meta Ads falhou: ${(e as Error).message}`);
     }
@@ -159,14 +252,39 @@ async function buildSnapshots(
 
   if (wantsGoogle && googleId) {
     try {
-      const [report, keywords, searchTerms, adGroups, ads] = await Promise.all([
+      const [
+        report, keywords, searchTerms, adGroups, ads,
+        previousReport, baselineReport, conversionActions, segments, auctionInsights,
+      ] = await Promise.all([
         getGoogleAdsAccountReport(googleId, since, until, preset),
         getGoogleAdsKeywords(googleId, since, until, preset, 25).catch(() => []),
         getGoogleAdsSearchTerms(googleId, since, until, preset, 100).catch(() => []),
         getGoogleAdsAdGroups(googleId, since, until, preset).catch(() => []),
         getGoogleAdsAds(googleId, since, until, preset).catch(() => []),
+        periods.previous
+          ? getGoogleAdsAccountReport(googleId, periods.previous.since, periods.previous.until).catch(() => undefined)
+          : Promise.resolve(undefined),
+        periods.baseline28
+          ? getGoogleAdsAccountReport(googleId, periods.baseline28.since, periods.baseline28.until).catch(() => undefined)
+          : Promise.resolve(undefined),
+        getGoogleAdsConversionActions(googleId, since, until, preset).catch(() => []),
+        getGoogleAdsPerformanceBreakdowns(googleId, since, until, preset).catch(() => []),
+        getGoogleAdsAuctionInsights(googleId, since, until, preset).catch(() => []),
       ]);
-      snapshots.push(googleSnapshot(report, { keywords, searchTerms, adGroups, ads, niche: niche.niche, month }));
+      snapshots.push(googleSnapshot(report, {
+        keywords,
+        searchTerms,
+        adGroups,
+        ads,
+        previousReport,
+        baselineReport,
+        conversionActions,
+        segments,
+        auctionInsights,
+        businessContext: [cliente, contexto, niche.label].filter(Boolean).join(" "),
+        niche: niche.niche,
+        month,
+      }));
     } catch (e) {
       avisos.push(`Google Ads falhou: ${(e as Error).message}`);
     }
@@ -292,7 +410,7 @@ export function registerIntelligenceTools(server: McpServer, metaClient: MetaAds
 
   server.tool(
     "get_client_analysis",
-    `Análise completa de um cliente (diagnóstico + auditoria unificados): score geral de mídia e score por canal, Meta Ads, Google Ads e Perfil da Empresa quando encontrado, KPIs por benchmark, alertas, desperdício separado por canal, veredito por campanha e plano de ação. Responde "como está a conta e o que fazer?". formato: omita para JSON, 'pdf' para entrega ou 'html' para dashboard.`,
+    `Auditoria e diagnóstico V2 orientados ao objetivo: score geral e seis dimensões por canal, cobertura/confiança, comparação com período anterior e média de 28 dias, saturação e criativos Meta, visibilidade/Ad Rank/Quality Score/conversões/segmentações Google, gasto sob risco deduplicado, Perfil da Empresa quando encontrado e plano de ação. formato: omita para JSON, 'pdf' para entrega ou 'html' para dashboard.`,
     INTEL_SCHEMA,
     (args) => runAnalysis(args as IntelArgs)
   );

@@ -3,6 +3,27 @@
 
 export type Platform = "meta" | "google";
 export type Channel = "meta" | "google" | "integrated";
+export type AuditGrade = "A" | "B" | "C" | "D" | "F" | "N/A";
+
+export type AuditDimension =
+  | "mensuracao"
+  | "resultado"
+  | "eficiencia"
+  | "entrega"
+  | "competitividade_qualidade"
+  | "saturacao_oportunidade";
+
+export interface DimensionScore {
+  dimension: AuditDimension;
+  label: string;
+  score: number | null;
+  grade: AuditGrade;
+  coverage: number;
+  confidence: number;
+  checks_avaliados: number;
+  checks_totais: number;
+  summary: string;
+}
 
 export type PerformanceLevel = "EXCELENTE" | "BOM" | "ATENCAO" | "CRITICO";
 export type Severity = "CRITICO" | "ALTO" | "MEDIO" | "BAIXO";
@@ -52,6 +73,11 @@ export interface Alert {
   evidence: string;
   recommendation: string;
   impactEstimate?: number;
+  /** Valor potencialmente exposto, sem afirmar que todo ele foi desperdiçado. */
+  riskEstimate?: number;
+  confidence?: "alta" | "media" | "baixa";
+  dimension?: AuditDimension;
+  sampleNote?: string;
 }
 
 /** Check individual do Health Score. */
@@ -61,14 +87,20 @@ export interface HealthCheck {
   severity: Severity;
   status: CheckStatus;
   detail?: string;
+  dimension?: AuditDimension;
+  confidence?: number;
+  weight?: number;
 }
 
 /** Resultado do Health Score: nota + checks + transparência do que faltou. */
 export interface HealthScore {
-  score: number;
-  grade: "A" | "B" | "C" | "D" | "F";
+  score: number | null;
+  grade: AuditGrade;
   checks: HealthCheck[];
   insuficientes: string[];
+  coverage: number;
+  confidence: number;
+  dimensions: DimensionScore[];
 }
 
 /** Contexto usado para classificar — plataforma, objetivo, nicho e mês. */
@@ -77,6 +109,9 @@ export interface ClassifyContext {
   objective?: string;
   niche?: BenchmarkNiche;
   month?: number; // 1-12, para sazonalidade
+  /** Prioridade sobre benchmark externo quando existe base histórica comparável. */
+  history?: Record<string, number | undefined>;
+  historyLabel?: string;
 }
 
 export const SEVERITY_WEIGHT: Record<Severity, number> = {

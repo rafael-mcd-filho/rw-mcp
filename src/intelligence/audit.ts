@@ -1,53 +1,87 @@
-// Modo Auditoria — revisão profunda: tudo do diagnóstico + veredito por
-// campanha, desperdício por categoria e plano de ação priorizado por impacto.
+// Auditoria e diagnóstico unificados V2.
+// O score só é calculado depois de identificar objetivo, amostra, referência e tendência.
 
-import { runQualityGates, totalWaste, type AccountSnapshot, type GateCampaign } from "./quality-gates.js";
+import { runQualityGates, totalRisk, type AccountSnapshot, type GateCampaign } from "./quality-gates.js";
 import { computeHealthScore, GRADE_MEANING } from "./health-score.js";
 import { prioritizeAlerts, alertLine } from "./alerts.js";
 import { classifyKpis } from "./diagnosis.js";
 import { analyzeLayer, type LayerAnalysis, type LayerKind } from "./layers.js";
-import type { Alert, BenchmarkResult, Channel, ClassifyContext, Platform, Severity } from "./types.js";
+import type {
+  Alert,
+  AuditGrade,
+  BenchmarkResult,
+  Channel,
+  DimensionScore,
+  Platform,
+  Severity,
+} from "./types.js";
 
-type Verdict = "MANTER" | "OTIMIZAR" | "PAUSAR" | "SEM_ENTREGA";
+type Verdict = "MANTER" | "OTIMIZAR" | "INVESTIGAR" | "OBSERVAR" | "SEM_ENTREGA";
 
 export interface CampaignVerdict {
   nome: string;
+  objetivo: string;
+  resultado_label: string;
   gasto: number;
+  resultado: number;
   conversoes: number;
-  custo_por_conversao: number;
+  custo_por_resultado: number | null;
   veredito: Verdict;
   motivo: string;
+  confianca: "alta" | "media" | "baixa";
+}
+
+export interface TrendSummary {
+  label: string;
+  current: number;
+  previous?: number;
+  baseline28?: number;
+  delta_previous?: number | null;
+  delta_baseline?: number | null;
+  direction: "higher_better" | "lower_better" | "neutral";
 }
 
 export interface ChannelAudit {
   channel: Channel;
   platform: Platform;
+  objetivo_predominante: string;
   gasto: number;
   conversoes: number;
-  score: number;
-  grade: "A" | "B" | "C" | "D" | "F";
+  resultado_principal: number;
+  resultado_label: string;
+  custo_por_resultado: number | null;
+  score: number | null;
+  grade: AuditGrade;
   grade_significado: string;
+  coverage: number;
+  confidence: number;
+  dimensoes: DimensionScore[];
   kpis: BenchmarkResult[];
+  tendencias: TrendSummary[];
   campanhas: CampaignVerdict[];
   alertas: Alert[];
   layers: LayerAnalysis[];
-  desperdicio_estimado: number;
+  gasto_sob_risco: number;
   checks_insuficientes: string[];
+  snapshot: AccountSnapshot;
 }
 
 export interface AnalysisResult {
   tipo: "analise";
+  versao_motor: "2.0";
   cliente: string;
   periodo: string;
   nicho: string;
   nicho_confianca: "alta" | "media" | "baixa";
   canais: ChannelAudit[];
-  score_geral: number;
-  grade_geral: "A" | "B" | "C" | "D" | "F";
+  score_geral: number | null;
+  grade_geral: AuditGrade;
   grade_geral_significado: string;
-  desperdicio_por_canal: Record<string, number>;
-  desperdicio_por_categoria: Record<string, number>;
-  desperdicio_estimado: number;
+  coverage: number;
+  confidence: number;
+  gasto_sob_risco_por_canal: Record<string, number>;
+  gasto_sob_risco_por_categoria: Record<string, number>;
+  gasto_sob_risco: number;
   plano_de_acao: { urgente: string[]; esta_semana: string[]; este_mes: string[] };
   mensagem: string;
   perfil_google?: BusinessProfileAudit;
@@ -55,7 +89,7 @@ export interface AnalysisResult {
 
 export interface BusinessProfileAudit {
   score: number;
-  grade: "A" | "B" | "C" | "D" | "F";
+  grade: Exclude<AuditGrade, "N/A">;
   grade_significado: string;
   visualizacoes: number;
   busca: number;
@@ -70,98 +104,17 @@ export interface BusinessProfileAudit {
   alertas: Array<{ title: string; evidence: string; recommendation: string; severity: Severity }>;
 }
 
-/** @deprecated diagnóstico e auditoria foram unificados — use AnalysisResult. */
 export type AuditResult = AnalysisResult;
 
 const round2 = (n: number): number => Math.round((Number(n) || 0) * 100) / 100;
 const moneyBR = (n: number): string =>
   "R$ " + (Number(n) || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const intBR = (n: number): string => (Number(n) || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 });
+const delta = (current: number, previous?: number): number | null =>
+  previous && Number.isFinite(previous) ? round2(((current - previous) / previous) * 100) : null;
 
-function refCpa(campanhas: GateCampaign[]): number | null {
-  const cpas = campanhas.filter((c) => c.conversoes > 0 && c.custo_por_conversao > 0).map((c) => c.custo_por_conversao).sort((a, b) => a - b);
-  if (!cpas.length) return null;
-  const mid = Math.floor(cpas.length / 2);
-  return cpas.length % 2 ? cpas[mid] : (cpas[mid - 1] + cpas[mid]) / 2;
-}
-
-function judgeCampaign(c: GateCampaign, gastoConta: number, ref: number | null): CampaignVerdict {
-  let veredito: Verdict;
-  let motivo: string;
-  const relevante = c.gasto >= Math.max(20, gastoConta * 0.05);
-
-  if (c.gasto === 0) {
-    veredito = "SEM_ENTREGA";
-    motivo = "Sem gasto no período.";
-  } else if (c.conversoes === 0 && relevante) {
-    veredito = "PAUSAR";
-    motivo = `${moneyBR(c.gasto)} sem nenhuma conversão.`;
-  } else if (c.conversoes > 0 && ref && c.custo_por_conversao >= ref * 2.5) {
-    veredito = "OTIMIZAR";
-    motivo = `CPA ${moneyBR(c.custo_por_conversao)} muito acima do médio da conta (${moneyBR(ref)}).`;
-  } else if (c.conversoes > 0) {
-    veredito = "MANTER";
-    motivo = `CPA ${moneyBR(c.custo_por_conversao)} · ${intBR(c.conversoes)} conv.`;
-  } else {
-    veredito = "OTIMIZAR";
-    motivo = "Gasto baixo sem conversão — observar.";
-  }
-  return {
-    nome: c.nome,
-    gasto: round2(c.gasto),
-    conversoes: round2(c.conversoes),
-    custo_por_conversao: round2(c.custo_por_conversao),
-    veredito,
-    motivo,
-  };
-}
-
-function auditChannel(s: AccountSnapshot): ChannelAudit {
-  const kpis = classifyKpis(s);
-  const { checks, alerts } = runQualityGates(s);
-  const health = computeHealthScore(checks);
-  const ref = refCpa(s.campanhas);
-  const campanhas = [...s.campanhas]
-    .sort((a, b) => b.gasto - a.gasto)
-    .map((c) => judgeCampaign(c, s.resumo.gasto, ref));
-  const alertas = prioritizeAlerts(alerts);
-
-  // Análise por camada — mesma régua de benchmark aplicada por entidade.
-  const ctx: ClassifyContext = { platform: s.platform, objective: s.objective, niche: s.niche, month: s.month };
-  const layers: LayerAnalysis[] = [];
-  const addLayer = (ents: GateCampaign[] | undefined, kind: LayerKind, label: string) => {
-    const a = analyzeLayer(ents, kind, label, ctx, s.resumo.gasto);
-    if (a) layers.push(a);
-  };
-  addLayer(s.campanhas, "campanha", "Campanhas");
-  if (s.platform === "meta") {
-    addLayer(s.conjuntos, "conjunto", "Conjuntos");
-    addLayer(s.anuncios, "anuncio", "Anúncios");
-  } else {
-    addLayer(s.conjuntos, "grupo", "Grupos de anúncios");
-    addLayer(s.anuncios, "anuncio", "Anúncios");
-  }
-
-  return {
-    channel: s.channel,
-    platform: s.platform,
-    gasto: round2(s.resumo.gasto),
-    conversoes: round2(s.resumo.conversoes),
-    score: health.score,
-    grade: health.grade,
-    grade_significado: GRADE_MEANING[health.grade],
-    kpis,
-    campanhas,
-    alertas,
-    layers,
-    desperdicio_estimado: totalWaste(alertas),
-    checks_insuficientes: health.insuficientes,
-  };
-}
-
-const CHANNEL_LABEL: Record<Channel, string> = { meta: "Meta Ads", google: "Google Ads", integrated: "Integrado" };
-
-function gradeFromScore(score: number): "A" | "B" | "C" | "D" | "F" {
+function gradeFromScore(score: number | null): AuditGrade {
+  if (score == null) return "N/A";
   if (score >= 90) return "A";
   if (score >= 75) return "B";
   if (score >= 60) return "C";
@@ -169,13 +122,180 @@ function gradeFromScore(score: number): "A" | "B" | "C" | "D" | "F" {
   return "F";
 }
 
+function judgeCampaign(campaign: GateCampaign): CampaignVerdict {
+  const result = campaign.primary_result;
+  const previousCost = campaign.previous?.custo_por_resultado;
+  const sampleEnough =
+    ["awareness", "video", "engagement"].includes(String(campaign.objective))
+      ? campaign.impressoes >= 1_000 || campaign.gasto >= 30
+      : campaign.cliques >= 10 || campaign.gasto >= 50;
+
+  let veredito: Verdict;
+  let motivo: string;
+  let confidence: CampaignVerdict["confianca"];
+  if (campaign.gasto === 0) {
+    veredito = "SEM_ENTREGA";
+    motivo = "Sem investimento no período.";
+    confidence = "alta";
+  } else if (result <= 0 && !sampleEnough) {
+    veredito = "OBSERVAR";
+    motivo = `Amostra ainda pequena: ${campaign.cliques} cliques e ${campaign.impressoes} impressões.`;
+    confidence = "baixa";
+  } else if (result <= 0) {
+    veredito = "INVESTIGAR";
+    motivo = `Não registrou ${String(campaign.primary_result_label ?? "o resultado principal").toLowerCase()} com amostra suficiente.`;
+    confidence = "media";
+  } else if (
+    campaign.cost_per_result != null &&
+    previousCost != null &&
+    previousCost > 0 &&
+    campaign.cost_per_result >= previousCost * 1.3
+  ) {
+    veredito = "OTIMIZAR";
+    motivo = `${campaign.primary_result_label}: ${intBR(result)}; custo ${moneyBR(campaign.cost_per_result)} (+${round2((campaign.cost_per_result / previousCost - 1) * 100)}% vs. anterior).`;
+    confidence = "alta";
+  } else {
+    veredito = "MANTER";
+    motivo = `${campaign.primary_result_label}: ${intBR(result)}${campaign.cost_per_result != null ? `; custo ${moneyBR(campaign.cost_per_result)}` : ""}.`;
+    confidence = previousCost ? "alta" : "media";
+  }
+
+  return {
+    nome: campaign.nome,
+    objetivo: campaign.objective_label ?? String(campaign.objective ?? "Não identificado"),
+    resultado_label: campaign.primary_result_label ?? "Resultados",
+    gasto: round2(campaign.gasto),
+    resultado: round2(result),
+    conversoes: round2(campaign.conversoes),
+    custo_por_resultado: campaign.cost_per_result == null ? null : round2(campaign.cost_per_result),
+    veredito,
+    motivo,
+    confianca: confidence,
+  };
+}
+
+function trendSummaries(snapshot: AccountSnapshot): TrendSummary[] {
+  const previous = snapshot.previous;
+  const baseline = snapshot.baseline28;
+  const rows: TrendSummary[] = [
+    {
+      label: "Investimento",
+      current: snapshot.resumo.gasto,
+      previous: previous?.gasto,
+      baseline28: baseline?.gasto,
+      direction: "neutral",
+    },
+    {
+      label: snapshot.resumo.primary_result_label ?? "Resultados",
+      current: snapshot.resumo.primary_result ?? snapshot.resumo.conversoes,
+      previous: previous?.resultado,
+      baseline28: baseline?.resultado,
+      direction: "higher_better",
+    },
+    {
+      label: "Custo por resultado",
+      current: snapshot.resumo.cost_per_result ?? 0,
+      previous: previous?.custo_por_resultado,
+      baseline28: baseline?.custo_por_resultado,
+      direction: "lower_better",
+    },
+    {
+      label: "CTR",
+      current: snapshot.resumo.ctr,
+      previous: previous?.ctr,
+      baseline28: baseline?.ctr,
+      direction: "higher_better",
+    },
+    {
+      label: "CPC",
+      current: snapshot.resumo.cpc_medio,
+      previous: previous?.cpc,
+      baseline28: baseline?.cpc,
+      direction: "lower_better",
+    },
+  ];
+  return rows.map(row => ({
+    ...row,
+    delta_previous: delta(row.current, row.previous),
+    delta_baseline: delta(row.current, row.baseline28),
+  }));
+}
+
+function auditChannel(snapshot: AccountSnapshot): ChannelAudit {
+  const kpis = classifyKpis(snapshot);
+  const { checks, alerts } = runQualityGates(snapshot);
+  const health = computeHealthScore(checks);
+  const campaigns = [...snapshot.campanhas].sort((a, b) => b.gasto - a.gasto).map(judgeCampaign);
+  const prioritized = prioritizeAlerts(alerts);
+  const layers: LayerAnalysis[] = [];
+  const addLayer = (entities: GateCampaign[] | undefined, kind: LayerKind, label: string) => {
+    const layer = analyzeLayer(
+      entities,
+      kind,
+      label,
+      {
+        platform: snapshot.platform,
+        objective: snapshot.objective,
+        niche: snapshot.niche,
+        month: snapshot.month,
+        history: snapshot.baseline28
+          ? { ctr: snapshot.baseline28.ctr, cpc: snapshot.baseline28.cpc, cpm: snapshot.baseline28.cpm }
+          : undefined,
+      },
+      snapshot.resumo.gasto
+    );
+    if (layer) layers.push(layer);
+  };
+  addLayer(snapshot.campanhas, "campanha", "Campanhas");
+  addLayer(snapshot.conjuntos, snapshot.platform === "meta" ? "conjunto" : "grupo", snapshot.platform === "meta" ? "Conjuntos" : "Grupos de anúncios");
+  addLayer(snapshot.anuncios, "anuncio", "Anúncios");
+
+  return {
+    channel: snapshot.channel,
+    platform: snapshot.platform,
+    objetivo_predominante: snapshot.objective_label ?? String(snapshot.objective ?? "Não identificado"),
+    gasto: round2(snapshot.resumo.gasto),
+    conversoes: round2(snapshot.resumo.conversoes),
+    resultado_principal: round2(snapshot.resumo.primary_result ?? snapshot.resumo.conversoes),
+    resultado_label: snapshot.resumo.primary_result_label ?? "Resultados",
+    custo_por_resultado: snapshot.resumo.cost_per_result ?? null,
+    score: health.score,
+    grade: health.grade,
+    grade_significado: GRADE_MEANING[health.grade],
+    coverage: health.coverage,
+    confidence: health.confidence,
+    dimensoes: health.dimensions,
+    kpis,
+    tendencias: trendSummaries(snapshot),
+    campanhas: campaigns,
+    alertas: prioritized,
+    layers,
+    gasto_sob_risco: totalRisk(prioritized),
+    checks_insuficientes: health.insuficientes,
+    snapshot,
+  };
+}
+
+const CHANNEL_LABEL: Record<Channel, string> = {
+  meta: "Meta Ads",
+  google: "Google Ads",
+  integrated: "Integrado",
+};
+
 export function auditBusinessProfile(profile: {
   metricas: {
-    visualizacoes_total: number; visualizacoes_busca: number; visualizacoes_maps: number;
-    solicitacoes_rota: number; cliques_ligar: number; cliques_site: number;
+    visualizacoes_total: number;
+    visualizacoes_busca: number;
+    visualizacoes_maps: number;
+    solicitacoes_rota: number;
+    cliques_ligar: number;
+    cliques_site: number;
   };
   avaliacoes: {
-    total: number; nota_media: number; novas_no_periodo: number; taxa_resposta: number;
+    total: number;
+    nota_media: number;
+    novas_no_periodo: number;
+    taxa_resposta: number;
   };
 }): BusinessProfileAudit {
   const alerts: BusinessProfileAudit["alertas"] = [];
@@ -208,9 +328,11 @@ export function auditBusinessProfile(profile: {
     alerts.push({ title: "Sem novas avaliações", severity: "BAIXO", evidence: "Nenhuma avaliação nova foi recebida no período.", recommendation: "Ativar uma rotina contínua de solicitação de avaliações após o atendimento." });
   }
   score = Math.max(0, Math.round(score));
-  const grade = gradeFromScore(score);
+  const grade = gradeFromScore(score) as Exclude<AuditGrade, "N/A">;
   return {
-    score, grade, grade_significado: GRADE_MEANING[grade],
+    score,
+    grade,
+    grade_significado: GRADE_MEANING[grade],
     visualizacoes: profile.metricas.visualizacoes_total,
     busca: profile.metricas.visualizacoes_busca,
     maps: profile.metricas.visualizacoes_maps,
@@ -232,85 +354,75 @@ export function buildAnalysis(input: {
   nicho_confianca: "alta" | "media" | "baixa";
   snapshots: AccountSnapshot[];
 }): AnalysisResult {
-  const canais = input.snapshots.map(auditChannel);
-  const alertas = prioritizeAlerts(canais.flatMap((c) => c.alertas)).filter((a) => a.status !== "PASS");
-
-  const desperdicioPorCategoria: Record<string, number> = {};
-  for (const a of alertas) {
-    if (a.impactEstimate) {
-      desperdicioPorCategoria[a.category] = round2((desperdicioPorCategoria[a.category] ?? 0) + a.impactEstimate);
+  const channels = input.snapshots.map(auditChannel);
+  const alerts = prioritizeAlerts(channels.flatMap(channel => channel.alertas)).filter(alert => alert.status !== "PASS");
+  const riskByCategory: Record<string, number> = {};
+  for (const alert of alerts) {
+    if (alert.riskEstimate) {
+      riskByCategory[alert.category] = round2((riskByCategory[alert.category] ?? 0) + alert.riskEstimate);
     }
   }
-  const desperdicio = round2(Object.values(desperdicioPorCategoria).reduce((acc, v) => acc + v, 0));
-  const desperdicioPorCanal = Object.fromEntries(
-    canais.map(c => [c.channel, round2(c.desperdicio_estimado)])
-  );
-  const scoreGeral = canais.length
-    ? Math.round(canais.reduce((sum, channel) => sum + channel.score, 0) / canais.length)
-    : 0;
-  const gradeGeral = gradeFromScore(scoreGeral);
+  const riskByChannel = Object.fromEntries(channels.map(channel => [channel.channel, channel.gasto_sob_risco]));
+  const totalRiskValue = round2(Object.values(riskByChannel).reduce((sum, value) => sum + value, 0));
+  const scored = channels.filter(channel => channel.score != null);
+  const score = scored.length
+    ? Math.round(scored.reduce((sum, channel) => sum + (channel.score as number) * Math.max(0.25, channel.confidence / 100), 0) /
+        scored.reduce((sum, channel) => sum + Math.max(0.25, channel.confidence / 100), 0))
+    : null;
+  const grade = gradeFromScore(score);
+  const coverage = channels.length ? Math.round(channels.reduce((sum, channel) => sum + channel.coverage, 0) / channels.length) : 0;
+  const confidence = channels.length ? Math.round(channels.reduce((sum, channel) => sum + channel.confidence, 0) / channels.length) : 0;
 
-  // Plano ordenado por R$ economizado dentro de cada bucket; prefixa o impacto.
-  const planoItem = (a: Alert) =>
-    `${a.impactEstimate ? `[${moneyBR(a.impactEstimate)}] ` : ""}${a.evidence} → ${a.recommendation}`;
-  const bucket = (sevs: Severity[]) =>
-    alertas
-      .filter((a) => sevs.includes(a.severity))
-      .sort((x, y) => (y.impactEstimate ?? 0) - (x.impactEstimate ?? 0))
-      .map(planoItem);
-  const plano = {
-    urgente: bucket(["CRITICO"]),
-    esta_semana: bucket(["ALTO"]),
-    este_mes: bucket(["MEDIO", "BAIXO"]),
-  };
+  const action = (alert: Alert) =>
+    `${alert.riskEstimate ? `[${moneyBR(alert.riskEstimate)} sob risco] ` : ""}${alert.evidence} → ${alert.recommendation}`;
+  const bucket = (severities: Severity[]) =>
+    alerts
+      .filter(alert => severities.includes(alert.severity))
+      .sort((a, b) => (b.riskEstimate ?? 0) - (a.riskEstimate ?? 0))
+      .map(action);
 
-  // Mensagem = ping conciso (estilo WhatsApp). O plano completo, o veredito por
-  // campanha e o desperdício por categoria ficam nos campos estruturados + no PDF.
-  const linhas: string[] = [];
-  linhas.push(`🩺 *Análise — ${input.cliente}*`);
-  linhas.push(`Período: ${input.periodo} · nicho: ${input.nicho}${input.nicho_confianca === "baixa" ? " (régua geral)" : ""}`);
-
-  for (const c of canais) {
-    linhas.push("");
-    linhas.push(`*${CHANNEL_LABEL[c.channel]}* — Health Score ${c.score}/100 (${c.grade}: ${c.grade_significado})`);
-    linhas.push(`${moneyBR(c.gasto)} · ${intBR(c.conversoes)} conv.`);
-    const kpiLine = c.kpis.map((k) => `${k.label} ${k.level}`).join(" · ");
-    if (kpiLine) linhas.push(kpiLine);
-    const pausar = c.campanhas.filter((v) => v.veredito === "PAUSAR");
-    if (pausar.length) {
-      linhas.push("Pausar/revisar: " + pausar.map((v) => v.nome).join(", "));
-    }
+  const message: string[] = [
+    `🩺 *Análise - ${input.cliente}*`,
+    `Período: ${input.periodo} · ${input.nicho}${input.nicho_confianca === "baixa" ? " (benchmark geral; baixa confiança)" : ""}`,
+  ];
+  for (const channel of channels) {
+    const scoreText = channel.score == null ? "não calculado" : `${channel.score}/100 (${channel.grade})`;
+    message.push(
+      "",
+      `*${CHANNEL_LABEL[channel.channel]}* - ${scoreText} · confiança ${channel.confidence}%`,
+      `Objetivo predominante: ${channel.objetivo_predominante}`,
+      `${moneyBR(channel.gasto)} · ${intBR(channel.resultado_principal)} ${channel.resultado_label.toLowerCase()}${channel.custo_por_resultado != null ? ` · ${moneyBR(channel.custo_por_resultado)} por resultado` : ""}`
+    );
+    const top = channel.alertas[0];
+    if (top) message.push(`Resumo: ${alertLine(top)}`);
   }
-
-  const top = alertas.slice(0, 5);
-  if (top.length) {
-    linhas.push("", "*O que precisa da sua atenção*");
-    for (const a of top) linhas.push(`- ${alertLine(a)}`);
-  } else {
-    linhas.push("", "✅ Sem alertas relevantes no período.");
-  }
-
-  if (desperdicio > 0) {
-    linhas.push("", `💸 Desperdício estimado: ${moneyBR(desperdicio)} no período.`);
+  if (totalRiskValue > 0) {
+    message.push("", `💸 Gasto sob risco: ${moneyBR(totalRiskValue)}. É uma estimativa de exposição, não desperdício confirmado.`);
   }
 
   return {
     tipo: "analise",
+    versao_motor: "2.0",
     cliente: input.cliente,
     periodo: input.periodo,
     nicho: input.nicho,
     nicho_confianca: input.nicho_confianca,
-    canais,
-    score_geral: scoreGeral,
-    grade_geral: gradeGeral,
-    grade_geral_significado: GRADE_MEANING[gradeGeral],
-    desperdicio_por_canal: desperdicioPorCanal,
-    desperdicio_por_categoria: desperdicioPorCategoria,
-    desperdicio_estimado: desperdicio,
-    plano_de_acao: plano,
-    mensagem: linhas.join("\n"),
+    canais: channels,
+    score_geral: score,
+    grade_geral: grade,
+    grade_geral_significado: GRADE_MEANING[grade],
+    coverage,
+    confidence,
+    gasto_sob_risco_por_canal: riskByChannel,
+    gasto_sob_risco_por_categoria: riskByCategory,
+    gasto_sob_risco: totalRiskValue,
+    plano_de_acao: {
+      urgente: bucket(["CRITICO"]),
+      esta_semana: bucket(["ALTO"]),
+      este_mes: bucket(["MEDIO", "BAIXO"]),
+    },
+    mensagem: message.join("\n"),
   };
 }
 
-/** @deprecated diagnóstico e auditoria foram unificados — use buildAnalysis. */
 export const buildAudit = buildAnalysis;

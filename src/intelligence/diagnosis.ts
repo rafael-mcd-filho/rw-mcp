@@ -6,15 +6,15 @@ import { classifyMetric } from "./benchmarks.js";
 import { runQualityGates, totalWaste, type AccountSnapshot } from "./quality-gates.js";
 import { computeHealthScore, GRADE_MEANING } from "./health-score.js";
 import { prioritizeAlerts, alertLine } from "./alerts.js";
-import type { Alert, BenchmarkResult, Channel, Platform } from "./types.js";
+import type { Alert, AuditGrade, BenchmarkResult, Channel, Platform } from "./types.js";
 
 export interface ChannelDiagnosis {
   channel: Channel;
   platform: Platform;
   gasto: number;
   conversoes: number;
-  score: number;
-  grade: "A" | "B" | "C" | "D" | "F";
+  score: number | null;
+  grade: AuditGrade;
   grade_significado: string;
   kpis: BenchmarkResult[];
   alertas: Alert[];
@@ -41,14 +41,36 @@ const intBR = (n: number): string => (Number(n) || 0).toLocaleString("pt-BR", { 
 
 /** Classifica os KPIs relevantes de um snapshot contra o benchmark. */
 export function classifyKpis(s: AccountSnapshot): BenchmarkResult[] {
-  const ctx = { platform: s.platform, objective: s.objective, niche: s.niche, month: s.month };
+  const ctx = {
+    platform: s.platform,
+    objective: s.objective,
+    niche: s.niche,
+    month: s.month,
+    history: s.baseline28
+      ? {
+          ctr: s.baseline28.ctr,
+          cpc: s.baseline28.cpc,
+          cpm: s.baseline28.cpm,
+          cpl: s.baseline28.custo_por_resultado,
+        }
+      : undefined,
+  };
   const out: BenchmarkResult[] = [];
   const push = (r?: BenchmarkResult) => { if (r) out.push(r); };
 
   push(classifyMetric("ctr", s.resumo.ctr, ctx));
   push(classifyMetric("cpc", s.resumo.cpc_medio, ctx));
   if (s.platform === "meta" && s.resumo.cpm != null) push(classifyMetric("cpm", s.resumo.cpm, ctx));
-  if (s.resumo.conversoes > 0) push(classifyMetric("cpl", s.resumo.custo_por_conversao, ctx));
+  if (s.resumo.primary_result && s.resumo.cost_per_result != null) {
+    const metric =
+      s.objective === "video"
+        ? "cost_per_thruplay"
+        : s.objective === "awareness"
+        ? "cost_per_1000_reached"
+        : "cpl";
+    const value = s.objective === "awareness" ? s.resumo.cost_per_result * 1000 : s.resumo.cost_per_result;
+    push(classifyMetric(metric, value, ctx));
+  }
   if (s.resumo.conversoes > 0 && s.resumo.taxa_conversao != null) {
     push(classifyMetric("taxa_conversao", s.resumo.taxa_conversao, ctx));
   }
@@ -56,7 +78,6 @@ export function classifyKpis(s: AccountSnapshot): BenchmarkResult[] {
     push(classifyMetric("frequencia", s.resumo.frequencia, ctx));
   }
   if (s.platform === "google") {
-    if (s.resumo.quality_score_medio != null) push(classifyMetric("quality_score", s.resumo.quality_score_medio, ctx));
     if (s.resumo.impression_share != null) push(classifyMetric("impression_share", s.resumo.impression_share, ctx));
   }
   return out;
@@ -101,7 +122,7 @@ export function buildDiagnosis(input: {
 
   for (const c of canais) {
     linhas.push("");
-    linhas.push(`*${CHANNEL_LABEL[c.channel]}* — Health Score ${c.score}/100 (${c.grade}: ${c.grade_significado})`);
+    linhas.push(`*${CHANNEL_LABEL[c.channel]}* — Health Score ${c.score == null ? "não calculado" : `${c.score}/100`} (${c.grade}: ${c.grade_significado})`);
     linhas.push(`${moneyBR(c.gasto)} · ${intBR(c.conversoes)} conv.`);
     const kpiLine = c.kpis.map((k) => `${k.label} ${k.level}`).join(" · ");
     if (kpiLine) linhas.push(kpiLine);

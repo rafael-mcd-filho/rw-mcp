@@ -6,6 +6,7 @@
   "scripts": {
     "gen:referencia": "node scripts/gen-referencia.mjs",
     "build": "node scripts/gen-referencia.mjs && tsc",
+    "test:audit-v2": "npm run build && node scripts/audit-v2-regression.mjs",
     "dev": "node scripts/gen-referencia.mjs && tsc --watch",
     "start": "node dist/src/http.js",
     "start:http": "node dist/src/http.js",
@@ -16,6 +17,7 @@
     "@aws-sdk/s3-request-presigner": "^3.1088.0",
     "@modelcontextprotocol/sdk": "1.12.0",
     "@vercel/blob": "^0.27.0",
+    "pdf-lib": "^1.17.1",
     "puppeteer-core": "^23.0.0",
     "zod": "^3.25.76"
   },

@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from "pdf-lib";
 import puppeteer, { type Browser, type Page } from "puppeteer-core";
 import type { PdfReportModel } from "./report.js";
 import { renderPdfHtml } from "./pdf-template.js";
@@ -275,7 +276,7 @@ export async function renderHtmlPdf(html: string): Promise<{ pdf: Buffer; pageCo
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
-    await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 1 });
+    await page.setViewport({ width: 1190, height: 1684, deviceScaleFactor: 2 });
     await page.setContent(html, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page
       .evaluate(async () => {
@@ -291,6 +292,33 @@ export async function renderHtmlPdf(html: string): Promise<{ pdf: Buffer; pageCo
     const pageCount = await page.evaluate(
       () => document.querySelectorAll(".page").length || 1
     );
+    const isolatePages = await page.evaluate(
+      () => document.body.dataset.isolatedPdfPages === "true"
+    );
+    if (isolatePages && pageCount > 1) {
+      const merged = await PDFDocument.create();
+      await page.emulateMediaType("screen");
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+          )
+      );
+      const sheets = await page.$$(".page");
+      for (const sheet of sheets) {
+        const screenshot = Buffer.from(await sheet.screenshot({ type: "png" }));
+        const embedded = await merged.embedPng(screenshot);
+        const outputPage = merged.addPage([594.96, 841.92]);
+        outputPage.drawImage(embedded, {
+          x: 0,
+          y: 0,
+          width: 594.96,
+          height: 841.92,
+        });
+      }
+      const output = await merged.save({ useObjectStreams: true });
+      return { pdf: Buffer.from(output), pageCount };
+    }
     const pdf = Buffer.from(await page.pdf(PDF_OPTS));
     return { pdf, pageCount };
   } finally {
