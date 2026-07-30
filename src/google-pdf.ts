@@ -202,9 +202,12 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
         <small>Impacto do lance e da qualidade do anúncio</small>
       </div>
     </div>
-    <div class="note" style="margin-bottom:10px;font-size:9.4px">
-      <strong>Como interpretar:</strong> a parcela mostra quanto da demanda disponível na Pesquisa foi capturada.
-      As perdas indicam oportunidades não aproveitadas por orçamento ou pelo ranking do anúncio.
+    <div class="note" style="margin-bottom:10px;font-size:9.4px;line-height:1.45">
+      <strong>Em linguagem simples:</strong> a cada 100 oportunidades de exibição na Pesquisa, o anúncio apareceu em cerca de
+      <strong>${Math.round(r.parcela_impressoes)}</strong>. Deixou de aparecer em aproximadamente
+      <strong>${r.is_perdida_orcamento == null ? "—" : Math.round(r.is_perdida_orcamento)}</strong> por falta de orçamento e em
+      <strong>${r.is_perdida_rank == null ? "—" : Math.round(r.is_perdida_rank)}</strong> por ranking - combinação de lance,
+      qualidade e relevância do anúncio.
     </div>
     ${(r.pct_impressoes_topo != null || r.pct_impressoes_topo_absoluto != null || r.parcela_cliques != null) ? `
       <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0 6px">
@@ -223,6 +226,12 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
           <strong>${r.parcela_cliques == null ? "—" : pct(r.parcela_cliques)}</strong>
           <small>Cliques capturados entre os disponíveis</small>
         </div>
+      </div>
+      <div class="note" style="margin-bottom:10px;font-size:9.4px;line-height:1.45">
+        <strong>Quando o anúncio apareceu:</strong>
+        ${r.pct_impressoes_topo == null ? "não há dados suficientes sobre o topo." : `${pct(r.pct_impressoes_topo)} das exibições ficaram acima dos resultados orgânicos`}
+        ${r.pct_impressoes_topo_absoluto == null ? "" : ` e ${pct(r.pct_impressoes_topo_absoluto)} foram como primeiro anúncio pago`}.
+        ${r.parcela_cliques == null ? "" : `No total, a conta capturou ${pct(r.parcela_cliques)} dos cliques que estavam disponíveis no leilão.`}
       </div>` : ""}`;
 
   // Benchmark row
