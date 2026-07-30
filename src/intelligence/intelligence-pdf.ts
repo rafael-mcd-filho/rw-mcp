@@ -58,7 +58,10 @@ const VERDICT_COLOR: Record<string, string> = {
 };
 
 const INTEL_CSS = `
-.page { break-before: page; page-break-before: always; }
+.page {
+  break-before: page; page-break-before: always;
+  break-inside: avoid; page-break-inside: avoid;
+}
 .page:first-child { break-before: auto; page-break-before: auto; }
 .health-card {
   display: flex; align-items: center; gap: 20px;
