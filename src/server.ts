@@ -1182,28 +1182,17 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
       const ads = processMetaAds(adRows);
       const demographics = processMetaDemographics(demoRows);
       const funil = buildMetaFunil(adsets, accountRows);
-      const journeyMessage = [
-        funil.cliques_saida > 0 || funil.visualizacoes_pagina > 0
-          ? [
-              "",
-              "🌐 *Jornada após o anúncio*",
-              `↗️ Cliques de saída: ${intBR(funil.cliques_saida)}`,
-              `📄 Visualizações da página: ${intBR(funil.visualizacoes_pagina)}`,
-              `⚡ Taxa de carregamento: ${pctBR(funil.taxa_carregamento)}`,
-            ].join("\n")
-          : "",
-        `ℹ️ Frequência média de ${funil.alcance > 0 ? (accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / funil.alcance).toFixed(2).replace(".", ",") : "0,00"}: ${
-          funil.alcance > 0 && (accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / funil.alcance) >= 3
-            ? "atenção para possível fadiga criativa."
-            : "público ainda sem sinal forte de saturação."
-        }`,
-        funil.thruplays > 0
-          ? `🎬 Vídeos: ${intBR(funil.thruplays)} ThruPlays${funil.video_25 > 0 ? `; ${pctBR((funil.video_100 / funil.video_25) * 100)} de quem chegou a 25% assistiu até o final` : ""}.`
-          : "",
-      ].filter(Boolean).join("\n");
+      const frequency = funil.alcance > 0
+        ? accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / funil.alcance
+        : 0;
+      const journeyFacts = [
+        `frequência ${frequency.toFixed(2)}`,
+        funil.taxa_carregamento > 0 ? `taxa de carregamento ${pctBR(funil.taxa_carregamento)}` : "",
+        funil.video_25 > 0 ? `conclusão dos vídeos após 25% ${pctBR((funil.video_100 / funil.video_25) * 100)}` : "",
+      ].filter(Boolean).join(", ");
       accountReport.mensagem = accountReport.mensagem.replace(
-        "\n\n💡 Insights:",
-        `\n${journeyMessage}\n\n💡 Insights:`
+        "[IA: substitua este marcador por 1 ou 2 insights curtos, baseados nos dados do relatório, antes de entregar ou enviar a mensagem]",
+        `[IA: escreva no máximo 2 frases curtas, priorizando conclusões e sem listar métricas. Dados para análise: ${journeyFacts}.]`
       );
 
       // Top 4 criativos do período, com thumbnail e link de preview oficial.

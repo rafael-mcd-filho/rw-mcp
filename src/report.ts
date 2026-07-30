@@ -589,8 +589,6 @@ export function buildAccountReport(
 
   linhas.push(
     `🖱️ Cliques: ${intBR(totalCliques)}`,
-    `📈 CTR: ${pctBR(avgCTR)}`,
-    `💵 CPC médio: ${moneyBR(avgCPC)}`,
     `👥 Seus anúncios foram exibidos ${intBR(totalImpressoes)} vezes para cerca de ${intBR(totalAlcance)} pessoas.`,
     ``,
     ``,

@@ -274,46 +274,18 @@ function buildGoogleMessage(report: GoogleAdsEnhancedReport): string {
 
   lines.push(
     `🖱️ Cliques: ${intBR(r.cliques)}`,
-    `📈 CTR: ${pctBR(r.ctr)}`,
-    `💵 CPC médio: ${moneyBR(r.cpc_medio)}`,
     `👀 Impressões: ${intBR(r.impressoes)}`,
   );
 
-  if (r.parcela_impressoes != null) {
-    lines.push(
-      ``,
-      `🔎 *Visibilidade na Rede de Pesquisa*`,
-      `📊 Parcela de impressões: ${pctBR(r.parcela_impressoes)}`,
-    );
-    if (r.is_perdida_orcamento != null) {
-      lines.push(`💸 Perdida por orçamento: ${pctBR(r.is_perdida_orcamento)}`);
-    }
-    if (r.is_perdida_rank != null) {
-      lines.push(`📉 Perdida por posição: ${pctBR(r.is_perdida_rank)}`);
-    }
-    if (r.pct_impressoes_topo != null) {
-      lines.push(`⬆️ Presença no topo: ${pctBR(r.pct_impressoes_topo)}`);
-    }
-    if (r.pct_impressoes_topo_absoluto != null) {
-      lines.push(`🥇 Primeiro anúncio pago: ${pctBR(r.pct_impressoes_topo_absoluto)}`);
-    }
-    if (r.parcela_cliques != null) {
-      lines.push(`🖱️ Parcela de cliques: ${pctBR(r.parcela_cliques)}`);
-    }
-    const losses = [
-      r.is_perdida_orcamento != null
-        ? `${pctBR(r.is_perdida_orcamento)} por limite de orçamento`
-        : null,
-      r.is_perdida_rank != null
-        ? `${pctBR(r.is_perdida_rank)} por posição/ranking do anúncio`
-        : null,
-    ].filter(Boolean);
-    lines.push(
-      `ℹ️ Seus anúncios apareceram em ${pctBR(r.parcela_impressoes)} das oportunidades disponíveis na pesquisa${losses.length ? `; deixaram de aparecer em ${losses.join(" e ")}` : ""}.`
-    );
-  }
-
-  lines.push(``, ``, `✅ Resumo:`, `[IA]`);
+  const visibilityContext = r.parcela_impressoes != null
+    ? `Na Pesquisa, presença em ${pctBR(r.parcela_impressoes)} das oportunidades; perda por orçamento ${r.is_perdida_orcamento == null ? "indisponível" : pctBR(r.is_perdida_orcamento)} e por ranking ${r.is_perdida_rank == null ? "indisponível" : pctBR(r.is_perdida_rank)}; topo ${r.pct_impressoes_topo == null ? "indisponível" : pctBR(r.pct_impressoes_topo)}.`
+    : "";
+  lines.push(
+    ``,
+    ``,
+    `✅ Resumo:`,
+    `[IA: escreva 1 ou 2 frases objetivas com o principal diagnóstico. ${visibilityContext}]`,
+  );
 
   return lines.join("\n");
 }
@@ -909,8 +881,6 @@ function buildIntegratedMessage(
   if (meta && report.totais.investimento_meta > 0) {
     const totalCliques = meta.campanhas.reduce((s, c) => s + (c.cliques ?? 0), 0);
     const totalImpressoes = meta.campanhas.reduce((s, c) => s + (c.impressoes ?? 0), 0);
-    const avgCTR = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
-    const avgCPC = totalCliques > 0 ? report.totais.investimento_meta / totalCliques : 0;
 
     const CONV_CATS = ["lead_form", "messages", "sales"] as const;
     type ConvCat = typeof CONV_CATS[number];
@@ -938,34 +908,8 @@ function buildIntegratedMessage(
     }
     lines.push(
       `🖱️ Cliques: ${intBR(totalCliques)}`,
-      `📈 CTR: ${pctBR(avgCTR)}`,
-      `💵 CPC médio: ${moneyBR(avgCPC)}`,
       `👀 Impressões: ${intBR(totalImpressoes)}`,
     );
-    const diag = meta.diagnostico_entrega;
-    if (diag) {
-      if (diag.cliques_saida > 0 || diag.visualizacoes_pagina > 0) {
-        lines.push(
-          ``,
-          `🌐 *Jornada após o anúncio*`,
-          `↗️ Cliques de saída: ${intBR(diag.cliques_saida)}`,
-          `📄 Visualizações da página: ${intBR(diag.visualizacoes_pagina)}`,
-          `⚡ Taxa de carregamento: ${pctBR(diag.taxa_carregamento)}`,
-        );
-      }
-      const frequencyRead = diag.frequencia >= 3
-        ? "atenção para possível fadiga criativa"
-        : diag.frequencia >= 2
-          ? "repetição moderada; acompanhe CTR e CPM"
-          : "público ainda com baixa repetição";
-      lines.push(`ℹ️ Frequência média de ${diag.frequencia.toFixed(2).replace(".", ",")}: ${frequencyRead}.`);
-      if (diag.thruplays > 0) {
-        const completion = diag.video_25 > 0 ? (diag.video_100 / diag.video_25) * 100 : 0;
-        lines.push(
-          `🎬 Vídeos: ${intBR(diag.thruplays)} ThruPlays${diag.video_25 > 0 ? `; ${pctBR(completion)} de quem chegou a 25% assistiu até o final` : ""}.`
-        );
-      }
-    }
   }
 
   const google = report.canais.google_ads;
@@ -998,43 +942,8 @@ function buildIntegratedMessage(
     }
     lines.push(
       `🖱️ Cliques: ${intBR(gr.cliques)}`,
-      `📈 CTR: ${pctBR(gr.ctr)}`,
-      `💵 CPC médio: ${moneyBR(gr.cpc_medio)}`,
       `👀 Impressões: ${intBR(gr.impressoes)}`,
     );
-    if (gr.parcela_impressoes != null) {
-      const losses = [
-        gr.is_perdida_orcamento != null
-          ? `${pctBR(gr.is_perdida_orcamento)} por orçamento`
-          : null,
-        gr.is_perdida_rank != null
-          ? `${pctBR(gr.is_perdida_rank)} por posição/ranking`
-          : null,
-      ].filter(Boolean);
-      lines.push(
-        ``,
-        `🔎 *Visibilidade na Pesquisa*`,
-        `📊 Parcela de impressões: ${pctBR(gr.parcela_impressoes)}`,
-      );
-      if (gr.is_perdida_orcamento != null) {
-        lines.push(`💸 Perdida por orçamento: ${pctBR(gr.is_perdida_orcamento)}`);
-      }
-      if (gr.is_perdida_rank != null) {
-        lines.push(`📉 Perdida por posição: ${pctBR(gr.is_perdida_rank)}`);
-      }
-      if (gr.pct_impressoes_topo != null) {
-        lines.push(`⬆️ Presença no topo: ${pctBR(gr.pct_impressoes_topo)}`);
-      }
-      if (gr.pct_impressoes_topo_absoluto != null) {
-        lines.push(`🥇 Primeiro anúncio pago: ${pctBR(gr.pct_impressoes_topo_absoluto)}`);
-      }
-      if (gr.parcela_cliques != null) {
-        lines.push(`🖱️ Parcela de cliques: ${pctBR(gr.parcela_cliques)}`);
-      }
-      lines.push(
-        `ℹ️ Os anúncios capturaram ${pctBR(gr.parcela_impressoes)} das oportunidades de exibição na pesquisa${losses.length ? ` e perderam ${losses.join(" e ")}` : ""}.`
-      );
-    }
   }
 
   const profile = report.canais.google_business_profile;
@@ -1046,15 +955,31 @@ function buildIntegratedMessage(
       `📍 *PERFIL DA EMPRESA*`,
       `━━━━━━━━━━━━━━━━`,
       `👀 Visualizações do perfil: ${intBR(m.visualizacoes_total)}`,
-      `🔎 Na Busca: ${intBR(m.visualizacoes_busca)} · 🗺️ No Maps: ${intBR(m.visualizacoes_maps)}`,
-      `🚗 Solicitações de rota: ${intBR(m.solicitacoes_rota)}`,
-      `📞 Cliques para ligar: ${intBR(m.cliques_ligar)}`,
-      `🌐 Cliques no site: ${intBR(m.cliques_site)}`,
+      `📍 Ações: ${intBR(m.solicitacoes_rota)} rotas · ${intBR(m.cliques_ligar)} ligações · ${intBR(m.cliques_site)} visitas ao site`,
       `⭐ Avaliações: ${intBR(profile.avaliacoes.total)} · Nota ${profile.avaliacoes.nota_media.toFixed(1).replace(".", ",")}`,
     );
   }
 
-  lines.push(``, ``, `✅ Resumo:`, `[IA]`);
+  const summaryFacts: string[] = [];
+  if (meta?.diagnostico_entrega) {
+    const d = meta.diagnostico_entrega;
+    const videoCompletion = d.video_25 > 0 ? (d.video_100 / d.video_25) * 100 : null;
+    summaryFacts.push(
+      `Meta: frequência ${d.frequencia.toFixed(2)}${videoCompletion == null ? "" : `, conclusão dos vídeos após 25% ${pctBR(videoCompletion)}`}${d.taxa_carregamento > 0 ? `, taxa de carregamento ${pctBR(d.taxa_carregamento)}` : ""}.`
+    );
+  }
+  if (google?.resumo.parcela_impressoes != null) {
+    const g = google.resumo;
+    summaryFacts.push(
+      `Google: presença em ${pctBR(g.parcela_impressoes)} das oportunidades; perda por orçamento ${g.is_perdida_orcamento == null ? "indisponível" : pctBR(g.is_perdida_orcamento)} e por ranking ${g.is_perdida_rank == null ? "indisponível" : pctBR(g.is_perdida_rank)}; topo ${g.pct_impressoes_topo == null ? "indisponível" : pctBR(g.pct_impressoes_topo)}.`
+    );
+  }
+  lines.push(
+    ``,
+    ``,
+    `✅ Resumo:`,
+    `[IA: transforme estes dados em no máximo 2 frases curtas, priorizando conclusões e não repetindo uma lista de métricas. ${summaryFacts.join(" ")}]`,
+  );
 
   return lines.join("\n");
 }
