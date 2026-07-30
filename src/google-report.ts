@@ -277,11 +277,34 @@ function buildGoogleMessage(report: GoogleAdsEnhancedReport): string {
     `📈 CTR: ${pctBR(r.ctr)}`,
     `💵 CPC médio: ${moneyBR(r.cpc_medio)}`,
     `👀 Impressões: ${intBR(r.impressoes)}`,
-    ``,
-    ``,
-    `✅ Resumo:`,
-    `[IA]`,
   );
+
+  if (r.parcela_impressoes != null) {
+    lines.push(
+      ``,
+      `🔎 *Visibilidade na Rede de Pesquisa*`,
+      `📊 Parcela de impressões: ${pctBR(r.parcela_impressoes)}`,
+    );
+    if (r.is_perdida_orcamento != null) {
+      lines.push(`💸 Perdida por orçamento: ${pctBR(r.is_perdida_orcamento)}`);
+    }
+    if (r.is_perdida_rank != null) {
+      lines.push(`📉 Perdida por posição: ${pctBR(r.is_perdida_rank)}`);
+    }
+    const losses = [
+      r.is_perdida_orcamento != null
+        ? `${pctBR(r.is_perdida_orcamento)} por limite de orçamento`
+        : null,
+      r.is_perdida_rank != null
+        ? `${pctBR(r.is_perdida_rank)} por posição/ranking do anúncio`
+        : null,
+    ].filter(Boolean);
+    lines.push(
+      `ℹ️ Seus anúncios apareceram em ${pctBR(r.parcela_impressoes)} das oportunidades disponíveis na pesquisa${losses.length ? `; deixaram de aparecer em ${losses.join(" e ")}` : ""}.`
+    );
+  }
+
+  lines.push(``, ``, `✅ Resumo:`, `[IA]`);
 
   return lines.join("\n");
 }
@@ -937,6 +960,30 @@ function buildIntegratedMessage(
       `💵 CPC médio: ${moneyBR(gr.cpc_medio)}`,
       `👀 Impressões: ${intBR(gr.impressoes)}`,
     );
+    if (gr.parcela_impressoes != null) {
+      const losses = [
+        gr.is_perdida_orcamento != null
+          ? `${pctBR(gr.is_perdida_orcamento)} por orçamento`
+          : null,
+        gr.is_perdida_rank != null
+          ? `${pctBR(gr.is_perdida_rank)} por posição/ranking`
+          : null,
+      ].filter(Boolean);
+      lines.push(
+        ``,
+        `🔎 *Visibilidade na Pesquisa*`,
+        `📊 Parcela de impressões: ${pctBR(gr.parcela_impressoes)}`,
+      );
+      if (gr.is_perdida_orcamento != null) {
+        lines.push(`💸 Perdida por orçamento: ${pctBR(gr.is_perdida_orcamento)}`);
+      }
+      if (gr.is_perdida_rank != null) {
+        lines.push(`📉 Perdida por posição: ${pctBR(gr.is_perdida_rank)}`);
+      }
+      lines.push(
+        `ℹ️ Os anúncios capturaram ${pctBR(gr.parcela_impressoes)} das oportunidades de exibição na pesquisa${losses.length ? ` e perderam ${losses.join(" e ")}` : ""}.`
+      );
+    }
   }
 
   const profile = report.canais.google_business_profile;

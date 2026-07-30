@@ -183,6 +183,30 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
       <small>${esc(k.note)}</small>
     </div>`).join("")}</div>`;
 
+  const visibilityKpis = r.parcela_impressoes == null ? "" : `
+    ${sectionTitle("Visibilidade na Rede de Pesquisa")}
+    <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0 6px">
+      <div class="kpi red">
+        <span>Parcela de impressões</span>
+        <strong>${pct(r.parcela_impressoes)}</strong>
+        <small>Oportunidades em que o anúncio apareceu</small>
+      </div>
+      <div class="kpi black">
+        <span>Perdida por orçamento</span>
+        <strong>${r.is_perdida_orcamento == null ? "—" : pct(r.is_perdida_orcamento)}</strong>
+        <small>Exibições limitadas pelo orçamento</small>
+      </div>
+      <div class="kpi red">
+        <span>Perdida por posição</span>
+        <strong>${r.is_perdida_rank == null ? "—" : pct(r.is_perdida_rank)}</strong>
+        <small>Impacto do lance e da qualidade do anúncio</small>
+      </div>
+    </div>
+    <div class="note" style="margin-bottom:10px;font-size:9.4px">
+      <strong>Como interpretar:</strong> a parcela mostra quanto da demanda disponível na Pesquisa foi capturada.
+      As perdas indicam oportunidades não aproveitadas por orçamento ou pelo ranking do anúncio.
+    </div>`;
+
   // Benchmark row
   const benchRow = nicho
     ? `<div class="note" style="margin-bottom:10px;font-size:9.6px"><strong>Benchmark:</strong> ${esc(nicho)}</div>`
@@ -229,6 +253,7 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
     ${header(report.cliente ?? "Cliente", report.periodo, "Relatório Google Ads")}
     ${renderExecSummary(report, comparacao)}
     ${kpiHtml}
+    ${visibilityKpis}
     ${benchRow}
     ${leitura}
     <div class="section">

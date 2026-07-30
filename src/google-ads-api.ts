@@ -239,6 +239,9 @@ export interface GAccountReport {
     ctr: number;
     cpc_medio: number;
     custo_por_conversao: number;
+    parcela_impressoes?: number | null;
+    is_perdida_orcamento?: number | null;
+    is_perdida_rank?: number | null;
   };
   campanhas: GCampaign[];
 }
@@ -422,6 +425,30 @@ export async function getGoogleAdsAccountReport(
   const ctr = totalImpressoes > 0 ? (totalCliques / totalImpressoes) * 100 : 0;
   const cpcMedio = totalCliques > 0 ? totalGasto / totalCliques : 0;
   const custoPorConversao = totalConversoes > 0 ? totalGasto / totalConversoes : 0;
+  const weightedSearchMetric = (
+    value: (campaign: GCampaign) => number | null
+  ): number | null => {
+    const eligible = campanhas
+      .map(campaign => ({ campaign, value: value(campaign) }))
+      .filter(item => item.value != null && item.campaign.impressoes > 0);
+    const weight = eligible.reduce((sum, item) => sum + item.campaign.impressoes, 0);
+    return weight > 0
+      ? r2(eligible.reduce(
+          (sum, item) => sum + (item.value as number) * item.campaign.impressoes,
+          0
+        ) / weight)
+      : null;
+  };
+  const parcelaImpressoes = weightedSearchMetric(campaign => {
+    const parsed = Number.parseFloat(campaign.parcela_impressoes.replace("%", ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  });
+  const isPerdidaOrcamento = weightedSearchMetric(
+    campaign => campaign.is_perdida_orcamento ?? null
+  );
+  const isPerdidaRank = weightedSearchMetric(
+    campaign => campaign.is_perdida_rank ?? null
+  );
   const periodoLabel = since && until ? `${since} → ${until}` : preset ?? "últimos 30 dias";
 
   return {
@@ -435,6 +462,9 @@ export async function getGoogleAdsAccountReport(
       ctr: r2(ctr),
       cpc_medio: r2(cpcMedio),
       custo_por_conversao: r2(custoPorConversao),
+      parcela_impressoes: parcelaImpressoes,
+      is_perdida_orcamento: isPerdidaOrcamento,
+      is_perdida_rank: isPerdidaRank,
     },
     campanhas,
   };
