@@ -291,6 +291,15 @@ function buildGoogleMessage(report: GoogleAdsEnhancedReport): string {
     if (r.is_perdida_rank != null) {
       lines.push(`📉 Perdida por posição: ${pctBR(r.is_perdida_rank)}`);
     }
+    if (r.pct_impressoes_topo != null) {
+      lines.push(`⬆️ Presença no topo: ${pctBR(r.pct_impressoes_topo)}`);
+    }
+    if (r.pct_impressoes_topo_absoluto != null) {
+      lines.push(`🥇 Primeiro anúncio pago: ${pctBR(r.pct_impressoes_topo_absoluto)}`);
+    }
+    if (r.parcela_cliques != null) {
+      lines.push(`🖱️ Parcela de cliques: ${pctBR(r.parcela_cliques)}`);
+    }
     const losses = [
       r.is_perdida_orcamento != null
         ? `${pctBR(r.is_perdida_orcamento)} por limite de orçamento`
@@ -804,6 +813,12 @@ export interface MetaAccountReportLike {
   totais: { gasto: number; por_categoria: Record<string, number> };
   campanhas: PdfCampaignRow[];
   mensagem: string;
+  diagnostico_entrega?: {
+    cliques_saida: number;
+    visualizacoes_pagina: number;
+    taxa_carregamento: number;
+    frequencia: number;
+  };
 }
 
 export interface DailyPoint {
@@ -924,6 +939,24 @@ function buildIntegratedMessage(
       `💵 CPC médio: ${moneyBR(avgCPC)}`,
       `👀 Impressões: ${intBR(totalImpressoes)}`,
     );
+    const diag = meta.diagnostico_entrega;
+    if (diag) {
+      if (diag.cliques_saida > 0 || diag.visualizacoes_pagina > 0) {
+        lines.push(
+          ``,
+          `🌐 *Jornada após o anúncio*`,
+          `↗️ Cliques de saída: ${intBR(diag.cliques_saida)}`,
+          `📄 Visualizações da página: ${intBR(diag.visualizacoes_pagina)}`,
+          `⚡ Taxa de carregamento: ${pctBR(diag.taxa_carregamento)}`,
+        );
+      }
+      const frequencyRead = diag.frequencia >= 3
+        ? "atenção para possível fadiga criativa"
+        : diag.frequencia >= 2
+          ? "repetição moderada; acompanhe CTR e CPM"
+          : "público ainda com baixa repetição";
+      lines.push(`ℹ️ Frequência média de ${diag.frequencia.toFixed(2).replace(".", ",")}: ${frequencyRead}.`);
+    }
   }
 
   const google = report.canais.google_ads;
@@ -979,6 +1012,15 @@ function buildIntegratedMessage(
       }
       if (gr.is_perdida_rank != null) {
         lines.push(`📉 Perdida por posição: ${pctBR(gr.is_perdida_rank)}`);
+      }
+      if (gr.pct_impressoes_topo != null) {
+        lines.push(`⬆️ Presença no topo: ${pctBR(gr.pct_impressoes_topo)}`);
+      }
+      if (gr.pct_impressoes_topo_absoluto != null) {
+        lines.push(`🥇 Primeiro anúncio pago: ${pctBR(gr.pct_impressoes_topo_absoluto)}`);
+      }
+      if (gr.parcela_cliques != null) {
+        lines.push(`🖱️ Parcela de cliques: ${pctBR(gr.parcela_cliques)}`);
       }
       lines.push(
         `ℹ️ Os anúncios capturaram ${pctBR(gr.parcela_impressoes)} das oportunidades de exibição na pesquisa${losses.length ? ` e perderam ${losses.join(" e ")}` : ""}.`

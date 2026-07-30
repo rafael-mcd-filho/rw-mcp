@@ -205,7 +205,25 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
     <div class="note" style="margin-bottom:10px;font-size:9.4px">
       <strong>Como interpretar:</strong> a parcela mostra quanto da demanda disponível na Pesquisa foi capturada.
       As perdas indicam oportunidades não aproveitadas por orçamento ou pelo ranking do anúncio.
-    </div>`;
+    </div>
+    ${(r.pct_impressoes_topo != null || r.pct_impressoes_topo_absoluto != null || r.parcela_cliques != null) ? `
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0 6px">
+        <div class="kpi black">
+          <span>Presença no topo</span>
+          <strong>${r.pct_impressoes_topo == null ? "—" : pct(r.pct_impressoes_topo)}</strong>
+          <small>Exibições acima dos resultados orgânicos</small>
+        </div>
+        <div class="kpi red">
+          <span>Topo absoluto</span>
+          <strong>${r.pct_impressoes_topo_absoluto == null ? "—" : pct(r.pct_impressoes_topo_absoluto)}</strong>
+          <small>Exibições como primeiro anúncio pago</small>
+        </div>
+        <div class="kpi black">
+          <span>Parcela de cliques</span>
+          <strong>${r.parcela_cliques == null ? "—" : pct(r.parcela_cliques)}</strong>
+          <small>Cliques capturados entre os disponíveis</small>
+        </div>
+      </div>` : ""}`;
 
   // Benchmark row
   const benchRow = nicho

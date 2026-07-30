@@ -218,6 +218,9 @@ export interface GCampaign {
   cpc_medio: number;
   custo_por_conversao: number;
   parcela_impressoes: string;
+  pct_impressoes_topo?: number | null;
+  pct_impressoes_topo_absoluto?: number | null;
+  parcela_cliques?: number | null;
   is_perdida_orcamento?: number | null; // % de IS perdida por orçamento (Search)
   is_perdida_rank?: number | null; // % de IS perdida por rank/qualidade (Search)
   rede_pesquisa_google?: boolean;
@@ -242,6 +245,9 @@ export interface GAccountReport {
     parcela_impressoes?: number | null;
     is_perdida_orcamento?: number | null;
     is_perdida_rank?: number | null;
+    pct_impressoes_topo?: number | null;
+    pct_impressoes_topo_absoluto?: number | null;
+    parcela_cliques?: number | null;
   };
   campanhas: GCampaign[];
 }
@@ -342,6 +348,9 @@ export async function getGoogleAdsCampaigns(
       searchImpressionShare: number | string;
       searchBudgetLostImpressionShare: number | string;
       searchRankLostImpressionShare: number | string;
+      topImpressionPercentage: number | string;
+      absoluteTopImpressionPercentage: number | string;
+      searchClickShare: number | string;
     };
   }>(customerId, `
     SELECT
@@ -365,6 +374,9 @@ export async function getGoogleAdsCampaigns(
       metrics.search_impression_share,
       metrics.search_budget_lost_impression_share,
       metrics.search_rank_lost_impression_share
+      ,metrics.top_impression_percentage
+      ,metrics.absolute_top_impression_percentage
+      ,metrics.search_click_share
     FROM campaign
     WHERE ${where}
       AND campaign.status != 'REMOVED'
@@ -396,6 +408,9 @@ export async function getGoogleAdsCampaigns(
       parcela_impressoes: sisLabel,
       is_perdida_orcamento: pctOrNull(r.metrics?.searchBudgetLostImpressionShare),
       is_perdida_rank: pctOrNull(r.metrics?.searchRankLostImpressionShare),
+      pct_impressoes_topo: pctOrNull(r.metrics?.topImpressionPercentage),
+      pct_impressoes_topo_absoluto: pctOrNull(r.metrics?.absoluteTopImpressionPercentage),
+      parcela_cliques: pctOrNull(r.metrics?.searchClickShare),
       rede_pesquisa_google: r.campaign?.networkSettings?.targetGoogleSearch ?? false,
       rede_parceiros_pesquisa: r.campaign?.networkSettings?.targetSearchNetwork ?? false,
       rede_display: r.campaign?.networkSettings?.targetContentNetwork ?? false,
@@ -449,6 +464,15 @@ export async function getGoogleAdsAccountReport(
   const isPerdidaRank = weightedSearchMetric(
     campaign => campaign.is_perdida_rank ?? null
   );
+  const pctImpressoesTopo = weightedSearchMetric(
+    campaign => campaign.pct_impressoes_topo ?? null
+  );
+  const pctImpressoesTopoAbsoluto = weightedSearchMetric(
+    campaign => campaign.pct_impressoes_topo_absoluto ?? null
+  );
+  const parcelaCliques = weightedSearchMetric(
+    campaign => campaign.parcela_cliques ?? null
+  );
   const periodoLabel = since && until ? `${since} → ${until}` : preset ?? "últimos 30 dias";
 
   return {
@@ -465,6 +489,9 @@ export async function getGoogleAdsAccountReport(
       parcela_impressoes: parcelaImpressoes,
       is_perdida_orcamento: isPerdidaOrcamento,
       is_perdida_rank: isPerdidaRank,
+      pct_impressoes_topo: pctImpressoesTopo,
+      pct_impressoes_topo_absoluto: pctImpressoesTopoAbsoluto,
+      parcela_cliques: parcelaCliques,
     },
     campanhas,
   };

@@ -50,6 +50,9 @@ export interface MetaAdRow {
   cpc: number;
   cpm: number;
   frequencia: number;
+  quality_ranking?: string;
+  engagement_rate_ranking?: string;
+  conversion_rate_ranking?: string;
 }
 
 export interface MetaDemographicRow {
@@ -72,6 +75,14 @@ export interface MetaFunil {
   cliques_link: number;
   meta_label: string;
   meta_valor: number;
+  cliques_saida: number;
+  visualizacoes_pagina: number;
+  taxa_carregamento: number;
+  thruplays: number;
+  video_25: number;
+  video_50: number;
+  video_75: number;
+  video_100: number;
 }
 
 // ─── Processadores de dados ────────────────────────────────────────────────────
@@ -95,6 +106,9 @@ export function processMetaAdsets(rows: Insight[]): MetaAdsetRow[] {
         cpc: agg.avgCPC,
         cpm: agg.avgCPM,
         frequencia: agg.avgFrequency,
+        quality_ranking: r.quality_ranking,
+        engagement_rate_ranking: r.engagement_rate_ranking,
+        conversion_rate_ranking: r.conversion_rate_ranking,
       };
     })
     .sort((a, b) => b.gasto - a.gasto);
@@ -184,6 +198,21 @@ export function buildMetaFunil(
   const totalAlcance = accountRows.reduce((s, r) => s + toInt(r.reach ?? "0"), 0);
   const totalCliques = accountRows.reduce((s, r) => s + toInt(r.clicks), 0);
   const totalLink = accountRows.reduce((s, r) => s + toInt(r.inline_link_clicks ?? "0"), 0);
+  const actionValue = (names: string[]) => accountRows.reduce((sum, row) => {
+    const explicitOutbound = names.some(name => name.includes("outbound")) && row.outbound_clicks?.length
+      ? row.outbound_clicks
+      : undefined;
+    const metrics = explicitOutbound ?? row.actions ?? [];
+    return sum + metrics
+      .filter(metric => names.includes(metric.action_type))
+      .reduce((subtotal, metric) => subtotal + toInt(metric.value), 0);
+  }, 0);
+  const videoValue = (key: "video_thruplay_watched_actions" | "video_p25_watched_actions" |
+    "video_p50_watched_actions" | "video_p75_watched_actions" | "video_p100_watched_actions") =>
+    accountRows.reduce((sum, row) => sum + (row[key] ?? [])
+      .reduce((subtotal, metric) => subtotal + toInt(metric.value), 0), 0);
+  const totalOutbound = actionValue(["outbound_click", "unique_outbound_click"]);
+  const totalLandingViews = actionValue(["landing_page_view"]);
 
   // Determina meta principal pela categoria de maior gasto
   const byCategory: Record<string, { label: string; valor: number; gasto: number }> = {};
@@ -201,6 +230,14 @@ export function buildMetaFunil(
     cliques_link: totalLink,
     meta_label: dominant?.label ?? "Conversões",
     meta_valor: dominant?.valor ?? 0,
+    cliques_saida: totalOutbound,
+    visualizacoes_pagina: totalLandingViews,
+    taxa_carregamento: totalOutbound > 0 ? (totalLandingViews / totalOutbound) * 100 : 0,
+    thruplays: videoValue("video_thruplay_watched_actions"),
+    video_25: videoValue("video_p25_watched_actions"),
+    video_50: videoValue("video_p50_watched_actions"),
+    video_75: videoValue("video_p75_watched_actions"),
+    video_100: videoValue("video_p100_watched_actions"),
   };
 }
 
@@ -516,8 +553,61 @@ function page4(
   periodo: string,
   demographics: MetaDemographics,
   proximosPassos: string[],
-  notas: string[]
+  notas: string[],
+  funil: MetaFunil,
+  ads: MetaAdRow[]
 ): string {
+  const rankingLabel = (value?: string) => {
+    const labels: Record<string, string> = {
+      ABOVE_AVERAGE: "Acima da média",
+      AVERAGE: "Na média",
+      BELOW_AVERAGE_35: "Abaixo da média",
+      BELOW_AVERAGE_20: "Entre os 20% inferiores",
+      BELOW_AVERAGE_10: "Entre os 10% inferiores",
+      UNKNOWN: "Sem classificação",
+    };
+    return labels[(value ?? "").toUpperCase()] ?? value ?? "Sem classificação";
+  };
+  const rankedAds = ads.filter(ad =>
+    ad.quality_ranking || ad.engagement_rate_ranking || ad.conversion_rate_ranking
+  );
+  const bestRank = (key: "quality_ranking" | "engagement_rate_ranking" | "conversion_rate_ranking") =>
+    rankedAds.find(ad => ad[key])?.[key];
+  const journeyCards = funil.cliques_saida > 0 || funil.visualizacoes_pagina > 0
+    ? `<div class="section" style="margin-top:6px">
+        ${sectionTitle("Jornada após o anúncio")}
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0 7px">
+          <div class="kpi red"><span>Cliques de saída</span><strong>${intBR(funil.cliques_saida)}</strong><small>Cliques para fora da Meta</small></div>
+          <div class="kpi black"><span>Visualizações da página</span><strong>${intBR(funil.visualizacoes_pagina)}</strong><small>Página carregada após o clique</small></div>
+          <div class="kpi red"><span>Taxa de carregamento</span><strong>${pctBR(funil.taxa_carregamento)}</strong><small>Página carregada / clique de saída</small></div>
+        </div>
+        <div class="note" style="font-size:9.3px">
+          <strong>Como interpretar:</strong> uma diferença elevada entre cliques de saída e visualizações pode indicar lentidão, abandono antes do carregamento ou perda de mensuração.
+        </div>
+      </div>`
+    : "";
+  const rankingCards = rankedAds.length
+    ? `<div class="section">
+        ${sectionTitle("Saúde competitiva dos criativos")}
+        <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0">
+          <div class="kpi black"><span>Ranking de qualidade</span><strong style="font-size:15px">${esc(rankingLabel(bestRank("quality_ranking")))}</strong><small>Percepção e relevância do anúncio</small></div>
+          <div class="kpi red"><span>Ranking de engajamento</span><strong style="font-size:15px">${esc(rankingLabel(bestRank("engagement_rate_ranking")))}</strong><small>Interação esperada no leilão</small></div>
+          <div class="kpi black"><span>Ranking de conversão</span><strong style="font-size:15px">${esc(rankingLabel(bestRank("conversion_rate_ranking")))}</strong><small>Conversão esperada no leilão</small></div>
+        </div>
+        <p class="note-row">Classificações da Meta no nível de anúncio; podem ficar indisponíveis quando não há volume suficiente.</p>
+      </div>`
+    : "";
+  const videoCards = funil.thruplays > 0
+    ? `<div class="section">
+        ${sectionTitle("Retenção dos vídeos")}
+        <div class="kpi-grid" style="grid-template-columns:repeat(5,1fr);gap:6px;margin:7px 0">
+          ${[
+            ["ThruPlay", funil.thruplays], ["25%", funil.video_25], ["50%", funil.video_50],
+            ["75%", funil.video_75], ["100%", funil.video_100],
+          ].map(([label, value], index) => `<div class="kpi ${index % 2 ? "black" : "red"}" style="padding:10px"><span>${label}</span><strong style="font-size:19px">${intBR(Number(value))}</strong><small>reproduções</small></div>`).join("")}
+        </div>
+      </div>`
+    : "";
   function demoTable(rows: MetaDemographicRow[], label: string) {
     const maxImp = Math.max(...rows.map(r => r.impressoes), 1);
     const html = rows.map(r => {
@@ -577,6 +667,9 @@ function page4(
 
   return `<div class="page compact-page">
     ${pageHeader(cliente, periodo, "Meta Ads · Demográficos")}
+    ${journeyCards}
+    ${rankingCards}
+    ${videoCards}
     <div class="section" style="margin-top:6px">
       ${sectionTitle("Impressões e Alcance por Segmento")}
       ${demoSection}
@@ -638,7 +731,7 @@ export function renderMetaPagesFragment(p: MetaPdfParams): string {
     page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura, p.comparacao),
     page2(p.cliente, p.periodo, p.adsets),
     page3(p.cliente, p.periodo, p.ads, p.topCriativos),
-    page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas),
+    page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas, p.funil, p.ads),
   ].join("\n");
 }
 
@@ -657,7 +750,7 @@ ${META_PDF_CSS}
 ${page1(p.cliente, p.periodo, p.totais, p.campanhas, p.funil, p.leitura, p.comparacao)}
 ${page2(p.cliente, p.periodo, p.adsets)}
 ${page3(p.cliente, p.periodo, p.ads, p.topCriativos)}
-${page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas)}
+${page4(p.cliente, p.periodo, p.demographics, p.proximosPassos, p.notas, p.funil, p.ads)}
 <script>window.__READY__ = true;</script>
 </body>
 </html>`;

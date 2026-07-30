@@ -57,6 +57,8 @@ export const INSIGHTS_FIELDS =
     "impressions",
     "clicks",
     "inline_link_clicks",
+    "outbound_clicks",
+    "unique_outbound_clicks",
     "cpc",
     "cpm",
     "cpp",
@@ -164,6 +166,8 @@ export interface Insight {
   impressions: string;
   clicks: string;
   inline_link_clicks?: string;
+  outbound_clicks?: MetaActionMetric[];
+  unique_outbound_clicks?: MetaActionMetric[];
   cpc?: string;
   cpm?: string;
   cpp?: string;

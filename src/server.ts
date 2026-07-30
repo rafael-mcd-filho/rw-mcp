@@ -49,7 +49,7 @@ import {
 } from "./meta-pdf.js";
 import { renderIntegratedFullHtml } from "./pdf-template.js";
 import { renderBecoCplHtml } from "./beco-cpl-pdf.js";
-import { moneyBR, intBR } from "./format.js";
+import { moneyBR, intBR, pctBR } from "./format.js";
 import { clientsConfigured, findClient, loadClients, clientContexto } from "./clients-db.js";
 import { getReferenciaMetaAds } from "./referencia.js";
 import { registerIntelligenceTools } from "./server-tools/intelligence-tools.js";
@@ -1176,10 +1176,32 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
       const periodo = `${periodSince} a ${periodUntil}`;
       const accountReport = buildAccountReport(accountRows, periodo, cliente);
+      const toI = (v: unknown) => parseInt(String(v ?? "0"), 10) || 0;
+      const toN = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
       const adsets = processMetaAdsets(adsetRows);
       const ads = processMetaAds(adRows);
       const demographics = processMetaDemographics(demoRows);
       const funil = buildMetaFunil(adsets, accountRows);
+      const journeyMessage = [
+        funil.cliques_saida > 0 || funil.visualizacoes_pagina > 0
+          ? [
+              "",
+              "🌐 *Jornada após o anúncio*",
+              `↗️ Cliques de saída: ${intBR(funil.cliques_saida)}`,
+              `📄 Visualizações da página: ${intBR(funil.visualizacoes_pagina)}`,
+              `⚡ Taxa de carregamento: ${pctBR(funil.taxa_carregamento)}`,
+            ].join("\n")
+          : "",
+        `ℹ️ Frequência média de ${funil.alcance > 0 ? (accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / funil.alcance).toFixed(2).replace(".", ",") : "0,00"}: ${
+          funil.alcance > 0 && (accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / funil.alcance) >= 3
+            ? "atenção para possível fadiga criativa."
+            : "público ainda sem sinal forte de saturação."
+        }`,
+      ].filter(Boolean).join("\n");
+      accountReport.mensagem = accountReport.mensagem.replace(
+        "\n\n💡 Insights:",
+        `\n${journeyMessage}\n\n💡 Insights:`
+      );
 
       // Top 4 criativos do período, com thumbnail e link de preview oficial.
       let topCriativos: TopCriativo[] = [];
@@ -1211,8 +1233,6 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
 
       // Totais da conta
       let totalImp = 0, totalReach = 0, totalCliques = 0, totalFreqWeight = 0;
-      const toI = (v: unknown) => parseInt(String(v ?? "0"), 10) || 0;
-      const toN = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
       for (const r of accountRows) {
         totalImp += toI(r.impressions);
         totalReach += toI(r.reach ?? "0");
@@ -1921,7 +1941,11 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
         let metaAdsets: ReturnType<typeof processMetaAdsets> = [];
         let metaAds: ReturnType<typeof processMetaAds> = [];
         let metaDemographics: ReturnType<typeof processMetaDemographics> = { por_genero: [], por_faixa_etaria: [] };
-        let metaFunil: ReturnType<typeof buildMetaFunil> = { alcance: 0, cliques: 0, cliques_link: 0, meta_label: "", meta_valor: 0 };
+        let metaFunil: ReturnType<typeof buildMetaFunil> = {
+          alcance: 0, cliques: 0, cliques_link: 0, meta_label: "", meta_valor: 0,
+          cliques_saida: 0, visualizacoes_pagina: 0, taxa_carregamento: 0,
+          thruplays: 0, video_25: 0, video_50: 0, video_75: 0, video_100: 0,
+        };
         let metaComparacao: MetaReportComparison | undefined;
         let topCriativos: TopCriativo[] = [];
         let metaTotaisExt = { totalImp: 0, totalReach: 0, totalCliques: 0, avgCTR: 0, avgCPM: 0, avgFrequency: 0 };
@@ -1945,6 +1969,14 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
           metaAds = processMetaAds(adRows);
           metaDemographics = processMetaDemographics(demoRows);
           metaFunil = buildMetaFunil(metaAdsets, accountRows);
+          metaReport.diagnostico_entrega = {
+            cliques_saida: metaFunil.cliques_saida,
+            visualizacoes_pagina: metaFunil.visualizacoes_pagina,
+            taxa_carregamento: metaFunil.taxa_carregamento,
+            frequencia: metaFunil.alcance > 0
+              ? accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / metaFunil.alcance
+              : 0,
+          };
           try {
             const topAds = [...metaAds]
               .filter((a) => a.gasto > 0 && a.ad_id)
