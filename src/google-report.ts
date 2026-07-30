@@ -818,6 +818,9 @@ export interface MetaAccountReportLike {
     visualizacoes_pagina: number;
     taxa_carregamento: number;
     frequencia: number;
+    thruplays: number;
+    video_25: number;
+    video_100: number;
   };
 }
 
@@ -956,6 +959,12 @@ function buildIntegratedMessage(
           ? "repetição moderada; acompanhe CTR e CPM"
           : "público ainda com baixa repetição";
       lines.push(`ℹ️ Frequência média de ${diag.frequencia.toFixed(2).replace(".", ",")}: ${frequencyRead}.`);
+      if (diag.thruplays > 0) {
+        const completion = diag.video_25 > 0 ? (diag.video_100 / diag.video_25) * 100 : 0;
+        lines.push(
+          `🎬 Vídeos: ${intBR(diag.thruplays)} ThruPlays${diag.video_25 > 0 ? `; ${pctBR(completion)} de quem chegou a 25% assistiu até o final` : ""}.`
+        );
+      }
     }
   }
 

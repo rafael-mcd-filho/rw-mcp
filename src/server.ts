@@ -1197,6 +1197,9 @@ Passe incluir_diario=true para receber também a evolução dia a dia (gasto, re
             ? "atenção para possível fadiga criativa."
             : "público ainda sem sinal forte de saturação."
         }`,
+        funil.thruplays > 0
+          ? `🎬 Vídeos: ${intBR(funil.thruplays)} ThruPlays${funil.video_25 > 0 ? `; ${pctBR((funil.video_100 / funil.video_25) * 100)} de quem chegou a 25% assistiu até o final` : ""}.`
+          : "",
       ].filter(Boolean).join("\n");
       accountReport.mensagem = accountReport.mensagem.replace(
         "\n\n💡 Insights:",
@@ -1976,6 +1979,9 @@ Keywords e termos de pesquisa vêm desligados por padrão (mais rápido); ligue 
             frequencia: metaFunil.alcance > 0
               ? accountRows.reduce((sum, row) => sum + toN(row.frequency ?? "0") * toI(row.reach ?? "0"), 0) / metaFunil.alcance
               : 0,
+            thruplays: metaFunil.thruplays,
+            video_25: metaFunil.video_25,
+            video_100: metaFunil.video_100,
           };
           try {
             const topAds = [...metaAds]
