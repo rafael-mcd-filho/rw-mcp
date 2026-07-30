@@ -203,11 +203,14 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
       </div>
     </div>
     <div class="note" style="margin-bottom:10px;font-size:9.4px;line-height:1.45">
-      <strong>Em linguagem simples:</strong> a cada 100 oportunidades de exibição na Pesquisa, o anúncio apareceu em cerca de
-      <strong>${Math.round(r.parcela_impressoes)}</strong>. Deixou de aparecer em aproximadamente
-      <strong>${r.is_perdida_orcamento == null ? "—" : Math.round(r.is_perdida_orcamento)}</strong> por falta de orçamento e em
-      <strong>${r.is_perdida_rank == null ? "—" : Math.round(r.is_perdida_rank)}</strong> por ranking - combinação de lance,
-      qualidade e relevância do anúncio.
+      <strong>Como a conta fecha:</strong> de cada 100 oportunidades elegíveis, o anúncio apareceu em
+      <strong>${pct(r.parcela_impressoes)}</strong> e não apareceu nas outras
+      <strong>${pct(Math.max(0, 100 - r.parcela_impressoes))}</strong>.
+      As oportunidades perdidas se dividem em
+      <strong>${r.is_perdida_orcamento == null ? "—" : pct(r.is_perdida_orcamento)}</strong> por orçamento e
+      <strong>${r.is_perdida_rank == null ? "—" : pct(r.is_perdida_rank)}</strong> por ranking - lance, qualidade e relevância.
+      Portanto: ${pct(r.parcela_impressoes)} + ${r.is_perdida_orcamento == null ? "—" : pct(r.is_perdida_orcamento)}
+      + ${r.is_perdida_rank == null ? "—" : pct(r.is_perdida_rank)} = aproximadamente 100%.
     </div>
     ${(r.pct_impressoes_topo != null || r.pct_impressoes_topo_absoluto != null || r.parcela_cliques != null) ? `
       <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr);gap:8px;margin:7px 0 6px">
@@ -217,7 +220,7 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
           <small>Exibições acima dos resultados orgânicos</small>
         </div>
         <div class="kpi red">
-          <span>Topo absoluto</span>
+          <span>Topo absoluto (dentro do topo)</span>
           <strong>${r.pct_impressoes_topo_absoluto == null ? "—" : pct(r.pct_impressoes_topo_absoluto)}</strong>
           <small>Exibições como primeiro anúncio pago</small>
         </div>
@@ -228,9 +231,9 @@ function page1(report: GoogleAdsEnhancedReport, comparacao?: GoogleReportCompari
         </div>
       </div>
       <div class="note" style="margin-bottom:10px;font-size:9.4px;line-height:1.45">
-        <strong>Quando o anúncio apareceu:</strong>
-        ${r.pct_impressoes_topo == null ? "não há dados suficientes sobre o topo." : `${pct(r.pct_impressoes_topo)} das exibições ficaram acima dos resultados orgânicos`}
-        ${r.pct_impressoes_topo_absoluto == null ? "" : ` e ${pct(r.pct_impressoes_topo_absoluto)} foram como primeiro anúncio pago`}.
+        <strong>O topo absoluto não é somado ao topo:</strong>
+        ${r.pct_impressoes_topo == null ? "não há dados suficientes sobre o topo." : `${pct(r.pct_impressoes_topo)} das impressões recebidas ficaram no topo`}
+        ${r.pct_impressoes_topo_absoluto == null || r.pct_impressoes_topo == null ? "" : `; dentro desse total, ${pct(r.pct_impressoes_topo_absoluto)} foram como primeiro anúncio pago. Em cada 100 impressões recebidas, isso equivale a cerca de ${pct(r.pct_impressoes_topo_absoluto)} na primeira posição, ${pct(Math.max(0, r.pct_impressoes_topo - r.pct_impressoes_topo_absoluto))} nas demais posições de topo e ${pct(Math.max(0, 100 - r.pct_impressoes_topo))} fora do topo`}.
         ${r.parcela_cliques == null ? "" : `No total, a conta capturou ${pct(r.parcela_cliques)} dos cliques que estavam disponíveis no leilão.`}
       </div>` : ""}`;
 
