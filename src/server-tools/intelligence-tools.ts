@@ -43,6 +43,7 @@ const scalar = (v: unknown): string | undefined => {
 
 interface IntelArgs {
   nome_cliente?: string;
+  client_name?: string;
   nomeCliente?: string;
   cliente?: string;
   client?: string;
@@ -65,6 +66,7 @@ interface IntelArgs {
 
 const INTEL_SCHEMA = {
   nome_cliente: z.string().optional().describe("Nome do cliente na base. Resolve IDs Meta/Google e o contexto automaticamente."),
+  client_name: z.string().optional().describe("Nome de exibição quando os IDs Meta/Google forem informados diretamente, sem cadastro na base."),
   meta_account_id: z.union([z.string(), z.number()]).optional().describe("ID da conta Meta Ads (se não usar nome_cliente)."),
   google_customer_id: z.union([z.string(), z.number()]).optional().describe("ID da conta Google Ads, sem traços (se não usar nome_cliente)."),
   contexto_cliente: z.string().optional().describe("Texto livre com nicho + sobre a empresa. Sobrescreve o da base."),
@@ -108,6 +110,7 @@ async function resolveClient(a: IntelArgs): Promise<{
   record?: ClientRecord;
 }> {
   const nome = scalar(a.nome_cliente ?? a.nomeCliente ?? a.cliente ?? a.client);
+  const displayName = scalar(a.client_name);
   let record: ClientRecord | undefined;
   if (nome && clientsConfigured()) {
     record = await findClient(nome);
@@ -117,7 +120,7 @@ async function resolveClient(a: IntelArgs): Promise<{
   const googleId = onlyDigits(a.google_customer_id ?? a.id_conta_google ?? record?.id_conta_google);
   const contexto = scalar(a.contexto_cliente) ?? clientContexto(record);
   return {
-    cliente: record?.nome_cliente ?? nome ?? "Cliente",
+    cliente: record?.nome_cliente ?? displayName ?? nome ?? "Cliente",
     metaId: metaId || undefined,
     googleId: googleId || undefined,
     contexto,
