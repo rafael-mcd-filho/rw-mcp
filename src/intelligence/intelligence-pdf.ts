@@ -28,9 +28,6 @@ html, body { margin: 0; padding: 0; font-family: Inter, Arial, sans-serif; color
 }
 .page + .page { break-before: page; page-break-before: always; }
 .topline { position: absolute; top: 0; left: 0; width: 100%; height: 6mm; background: linear-gradient(90deg,#2358f5 44%,#102e6c 44%); }
-.header-overlay { position: absolute; top: 28mm; left: 16mm; right: 16mm; z-index: 5; background: #fff; }
-.header-overlay .report-header { margin-bottom: 0; }
-.header-space { height: 72px; }
 h2 { font-size: 15px; margin: 12px 0 7px; }
 h3 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .35px; margin: 12px 0 6px; }
 h4 { margin: 0 0 4px; font-size: 10px; }
@@ -307,7 +304,7 @@ function renderActionPlan(result: AnalysisResult): string {
 
 function wrap(result: AnalysisResult, title: string, bodies: string[]): string {
   const logo = reportLogoDataUri();
-  const pages = bodies.map((body, index) => `<section class="page"><div class="topline"></div><div class="header-overlay">${header(logo, title, result)}</div><div class="header-space"></div>${body}${footer(index + 1, bodies.length)}</section>`).join("");
+  const pages = bodies.map((body, index) => `<section class="page"><div class="topline"></div>${header(logo, title, result)}${body}${footer(index + 1, bodies.length)}</section>`).join("");
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(result.cliente)} - ${escapeHtml(title)}</title><style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');${BASE_REPORT_CSS}${CSS}</style></head><body data-isolated-pdf-pages="true">${pages}<script>window.__READY__=true;</script></body></html>`;
 }
 
