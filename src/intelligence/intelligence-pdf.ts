@@ -59,6 +59,7 @@ const VERDICT_COLOR: Record<string, string> = {
 
 const INTEL_CSS = `
 .page {
+  height: 296mm;
   break-before: page; page-break-before: always;
   break-inside: avoid; page-break-inside: avoid;
 }
